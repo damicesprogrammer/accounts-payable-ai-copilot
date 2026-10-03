@@ -11,9 +11,10 @@ import time
 from pydantic import ValidationError
 from sqlalchemy.orm import Session
 
-from app.ai.contracts import ToolCall, ToolDefinition
+from app.ai.contracts import EmbeddingProvider, ToolCall, ToolDefinition
+from app.ai.exceptions import LLMError
 from app.core.exceptions import DomainError
-from app.tools import titulo_tools
+from app.tools import documentacao_tools, titulo_tools
 from app.tools.contracts import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -66,6 +67,10 @@ class ToolRegistry:
         except DomainError as exc:
             # Erros de negócio são informação útil para o modelo: mantém o código do domínio.
             return ToolResult.falha(exc.code, exc.message)
+        except LLMError as exc:
+            # Ex.: search_documentation sem API key. As mensagens da camada de IA não
+            # contêm segredos nem texto bruto do fornecedor.
+            return ToolResult.falha("IA_INDISPONIVEL", str(exc))
         except Exception:
             # Detalhes ficam no log do servidor; o modelo recebe apenas uma mensagem genérica.
             logger.exception("Erro inesperado ao executar tool", extra={"tool": tool.name})
@@ -80,12 +85,16 @@ def _resumo_validacao(exc: ValidationError) -> str:
     return "Argumentos inválidos — " + "; ".join(erros)
 
 
-def criar_registry_financeiro() -> ToolRegistry:
-    """Allowlist explícita das tools disponíveis ao LLM. Todas somente leitura."""
+def criar_registry_financeiro(embeddings: EmbeddingProvider | None = None) -> ToolRegistry:
+    """Allowlist explícita das tools disponíveis ao LLM. Todas somente leitura.
+
+    `embeddings` permite injetar o provider da search_documentation (ex.: fake nos testes).
+    """
     registry = ToolRegistry()
     registry.register(titulo_tools.get_titulo)
     registry.register(titulo_tools.get_rateios_titulo)
     registry.register(titulo_tools.get_pagamentos_titulo)
     registry.register(titulo_tools.get_logs_titulo)
     registry.register(titulo_tools.get_titulos_vencidos)
+    registry.register(documentacao_tools.search_documentation(embeddings))
     return registry
