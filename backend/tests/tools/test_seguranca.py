@@ -157,7 +157,8 @@ def test_tools_nao_acessam_repositories_sql_nem_commit():
 
 def test_camada_de_ia_nao_usa_eval_exec_nem_import_dinamico():
     proibidos = {"eval", "exec", "__import__", "import_module", "getattr"}
-    for arquivo in [f for pasta in ("ai", "tools", "rag") for f in (APP_DIR / pasta).rglob("*.py")]:
+    pastas = ("ai", "tools", "rag", "agent")
+    for arquivo in [f for pasta in pastas for f in (APP_DIR / pasta).rglob("*.py")]:
         arvore = ast.parse(arquivo.read_text(encoding="utf-8"))
         chamados = {
             no.func.id if isinstance(no.func, ast.Name) else getattr(no.func, "attr", "")
