@@ -134,6 +134,15 @@ class TituloService:
                 titulo_id=titulo.id,
                 valor_rateado=str(valor_rateado),
             )
+        # Após um estorno, um título PENDENTE pode manter pagamentos confirmados.
+        valor_pago = PagamentoRepository(self.db).soma_confirmados(titulo.id)
+        if dados.valor_total < valor_pago:
+            raise BusinessRuleError(
+                f"O valor total {dados.valor_total} é menor que o já pago ({valor_pago}).",
+                code="VALOR_MENOR_QUE_PAGO",
+                titulo_id=titulo.id,
+                valor_pago=str(valor_pago),
+            )
 
         alteracoes = [
             f"{campo}: {getattr(titulo, campo)} -> {novo}"
@@ -194,6 +203,16 @@ class TituloService:
     def reprocessar(self, titulo_id: int) -> TituloPagar:
         """Devolve um título em ERRO para PENDENTE, após a causa ser corrigida."""
         titulo = self.obter_para_alteracao(titulo_id)
+        # PENDENTE também é destino do estorno (PAGO -> PENDENTE); reprocessar vale só para ERRO.
+        if titulo.status != StatusTitulo.ERRO:
+            raise BusinessRuleError(
+                f"Título {titulo.id} está {titulo.status}; apenas títulos em ERRO podem ser "
+                "reprocessados.",
+                code="TRANSICAO_STATUS_INVALIDA",
+                titulo_id=titulo.id,
+                status_atual=titulo.status,
+                status_destino=StatusTitulo.PENDENTE,
+            )
         self.mudar_status(titulo, StatusTitulo.PENDENTE, "Reprocessamento solicitado")
         self.db.commit()
         return titulo

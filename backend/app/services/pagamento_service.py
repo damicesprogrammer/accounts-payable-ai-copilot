@@ -74,7 +74,11 @@ class PagamentoService:
         return pagamento
 
     def estornar(self, titulo_id: int, pagamento_id: int) -> Pagamento:
-        """Estorna um pagamento de título ainda APROVADO (PAGO é estado final)."""
+        """Estorna um pagamento confirmado.
+
+        - Título APROVADO: continua APROVADO, com o saldo recalculado.
+        - Título PAGO: volta para PENDENTE (tudo na mesma transação).
+        """
         titulo = self.titulos.obter_para_alteracao(titulo_id)
         pagamento = self.repo.get(pagamento_id)
         if pagamento is None or pagamento.titulo_id != titulo.id:
@@ -84,19 +88,19 @@ class PagamentoService:
                 titulo_id=titulo_id,
                 pagamento_id=pagamento_id,
             )
-        if titulo.status != StatusTitulo.APROVADO:
-            raise BusinessRuleError(
-                f"Título {titulo.id} está {titulo.status}; só é possível estornar pagamentos "
-                "de títulos APROVADO.",
-                code="ESTORNO_NAO_PERMITIDO",
-                titulo_id=titulo.id,
-                status_atual=titulo.status,
-            )
         if pagamento.status == StatusPagamento.ESTORNADO:
             raise BusinessRuleError(
                 f"Pagamento {pagamento.id} já está estornado.",
                 code="PAGAMENTO_JA_ESTORNADO",
                 pagamento_id=pagamento.id,
+            )
+        if titulo.status not in (StatusTitulo.APROVADO, StatusTitulo.PAGO):
+            raise BusinessRuleError(
+                f"Título {titulo.id} está {titulo.status}; só é possível estornar pagamentos "
+                "de títulos APROVADO ou PAGO.",
+                code="ESTORNO_NAO_PERMITIDO",
+                titulo_id=titulo.id,
+                status_atual=titulo.status,
             )
 
         pagamento.status = StatusPagamento.ESTORNADO
@@ -105,6 +109,12 @@ class PagamentoService:
             f"Pagamento {pagamento.id} de {pagamento.valor} estornado.",
             titulo_id=titulo.id,
         )
+        # Título quitado que perde um pagamento volta ao início do fluxo:
+        # precisa ser aprovado de novo antes de aceitar novos pagamentos.
+        if titulo.status == StatusTitulo.PAGO:
+            self.titulos.mudar_status(
+                titulo, StatusTitulo.PENDENTE, f"Estorno do pagamento {pagamento.id}"
+            )
         self.db.commit()
         return pagamento
 

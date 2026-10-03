@@ -6,7 +6,9 @@ import pytest
 from app.core.exceptions import BusinessRuleError, NotFoundError
 from app.models import StatusPagamento, StatusTitulo, TipoLog
 from app.repositories.log_repository import LogRepository
+from app.schemas.titulo import TituloUpdate
 from app.services.pagamento_service import PagamentoService
+from app.services.rateio_service import RateioService
 from app.services.titulo_service import TituloService
 from tests.factories import criar_titulo, criar_titulo_aprovado, pagar, ratear
 
@@ -134,14 +136,126 @@ def test_data_pagamento_anterior_a_emissao(db):
 # ---------------------------------------------------------------- estorno
 
 
-def test_nao_estorna_pagamento_de_titulo_pago(db):
-    titulo = criar_titulo_aprovado(db, valor="100.00")
-    pagamento = pagar(db, titulo, "100.00")
+def _titulo_pago(db, *parcelas: str):
+    titulo = criar_titulo_aprovado(db, valor=str(sum(Decimal(p) for p in parcelas)))
+    pagamentos = [pagar(db, titulo, p) for p in parcelas]
+    assert titulo.status == StatusTitulo.PAGO
+    return titulo, pagamentos
+
+
+def test_estorno_em_titulo_pago_reabre_como_pendente(db):
+    titulo, (p1, p2) = _titulo_pago(db, "400.00", "600.00")
+
+    PagamentoService(db).estornar(titulo.id, p2.id)
+
+    assert p2.status == StatusPagamento.ESTORNADO
+    assert titulo.status == StatusTitulo.PENDENTE  # não volta para APROVADO
+
+
+def test_estorno_em_titulo_pago_recalcula_saldo(db):
+    titulo, (_, p2) = _titulo_pago(db, "400.00", "600.00")
+
+    PagamentoService(db).estornar(titulo.id, p2.id)
+
+    detalhe = TituloService(db).obter_detalhe(titulo.id)
+    assert detalhe.valor_pago == Decimal("400.00")
+    assert detalhe.saldo_pendente == Decimal("600.00")
+
+
+def test_estorno_em_titulo_pago_registra_auditoria(db):
+    titulo, (pagamento,) = _titulo_pago(db, "100.00")
+
+    PagamentoService(db).estornar(titulo.id, pagamento.id)
+
+    ultimos = LogRepository(db).list_by_titulo(titulo.id)[-2:]
+    assert [log.tipo for log in ultimos] == [TipoLog.PAGAMENTO, TipoLog.MUDANCA_STATUS]
+    assert "PAGO para PENDENTE" in ultimos[-1].mensagem
+
+
+def test_titulo_reaberto_por_estorno_nao_aceita_pagamento_ate_nova_aprovacao(db):
+    titulo, (pagamento,) = _titulo_pago(db, "100.00")
+    PagamentoService(db).estornar(titulo.id, pagamento.id)
 
     with pytest.raises(BusinessRuleError) as exc:
-        PagamentoService(db).estornar(titulo.id, pagamento.id)
+        pagar(db, titulo, "100.00")
+    assert exc.value.code == "TITULO_NAO_APROVADO"
 
-    assert exc.value.code == "ESTORNO_NAO_PERMITIDO"
+
+def test_titulo_reaberto_pode_ser_aprovado_e_quitado_novamente(db):
+    titulo, (_, p2) = _titulo_pago(db, "400.00", "600.00")
+    PagamentoService(db).estornar(titulo.id, p2.id)
+
+    TituloService(db).aprovar(titulo.id)
+    assert titulo.status == StatusTitulo.APROVADO
+
+    pagar(db, titulo, "600.00")
+    assert titulo.status == StatusTitulo.PAGO
+
+
+def test_nao_estorna_duas_vezes_pagamento_de_titulo_pago(db):
+    titulo, (pagamento,) = _titulo_pago(db, "100.00")
+    service = PagamentoService(db)
+    service.estornar(titulo.id, pagamento.id)
+
+    with pytest.raises(BusinessRuleError) as exc:
+        service.estornar(titulo.id, pagamento.id)
+
+    assert exc.value.code == "PAGAMENTO_JA_ESTORNADO"
+
+
+def test_falha_no_estorno_preserva_consistencia(db, monkeypatch):
+    """Se a reabertura do título falhar, o estorno do pagamento também é desfeito."""
+    titulo, (pagamento,) = _titulo_pago(db, "100.00")
+
+    def falha(*args, **kwargs):
+        raise RuntimeError("falha simulada")
+
+    monkeypatch.setattr(TituloService, "mudar_status", falha)
+    with pytest.raises(RuntimeError):
+        PagamentoService(db).estornar(titulo.id, pagamento.id)
+    db.rollback()  # o que a requisição faria ao encerrar com erro
+
+    db.refresh(titulo)
+    db.refresh(pagamento)
+    assert pagamento.status == StatusPagamento.CONFIRMADO
+    assert titulo.status == StatusTitulo.PAGO
+    assert LogRepository(db).list_by_titulo(titulo.id)[-1].tipo == TipoLog.MUDANCA_STATUS
+
+
+def test_titulo_pago_continua_sem_cancelamento_direto(db):
+    titulo, _ = _titulo_pago(db, "100.00")
+
+    with pytest.raises(BusinessRuleError):
+        TituloService(db).cancelar(titulo.id, "motivo")
+
+
+def test_reprocessar_nao_reabre_titulo_pago(db):
+    titulo, _ = _titulo_pago(db, "100.00")
+
+    with pytest.raises(BusinessRuleError) as exc:
+        TituloService(db).reprocessar(titulo.id)
+
+    assert exc.value.code == "TRANSICAO_STATUS_INVALIDA"
+
+
+def test_titulo_reaberto_nao_pode_ter_valor_menor_que_o_pago(db):
+    titulo, (_, p2) = _titulo_pago(db, "400.00", "600.00")
+    PagamentoService(db).estornar(titulo.id, p2.id)
+    RateioService(db).remover(titulo.id, RateioService(db).listar(titulo.id)[0].id)
+
+    with pytest.raises(BusinessRuleError) as exc:
+        TituloService(db).atualizar(
+            titulo.id,
+            TituloUpdate(
+                numero=titulo.numero,
+                descricao=titulo.descricao,
+                data_emissao=titulo.data_emissao,
+                data_vencimento=titulo.data_vencimento,
+                valor_total=Decimal("399.99"),
+            ),
+        )
+
+    assert exc.value.code == "VALOR_MENOR_QUE_PAGO"
 
 
 def test_nao_estorna_duas_vezes(db):

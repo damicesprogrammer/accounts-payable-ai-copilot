@@ -1,11 +1,13 @@
 """Máquina de estados do título a pagar.
 
     PENDENTE ──aprovar──► APROVADO ──(pagamentos = valor_total)──► PAGO
-       │  ▲                  │
-       │  └──reprocessar── ERRO ◄── falha de integração
-       └──────cancelar───────┴──► CANCELADO
+     ▲ │  ▲                  │                                       │
+     │ │  └──reprocessar── ERRO ◄── falha de integração              │
+     │ └──────cancelar───────┴──► CANCELADO                          │
+     └────────────────────── estorno de pagamento ───────────────────┘
 
-PAGO e CANCELADO são estados finais.
+CANCELADO é final. PAGO só sai por estorno de um pagamento, voltando a PENDENTE:
+o título precisa ser aprovado de novo antes de aceitar novos pagamentos.
 """
 
 from app.core.exceptions import BusinessRuleError
@@ -19,7 +21,7 @@ TRANSICOES: dict[StatusTitulo, frozenset[StatusTitulo]] = {
         {StatusTitulo.PAGO, StatusTitulo.CANCELADO, StatusTitulo.ERRO}
     ),
     StatusTitulo.ERRO: frozenset({StatusTitulo.PENDENTE, StatusTitulo.CANCELADO}),
-    StatusTitulo.PAGO: frozenset(),
+    StatusTitulo.PAGO: frozenset({StatusTitulo.PENDENTE}),  # somente via estorno
     StatusTitulo.CANCELADO: frozenset(),
 }
 

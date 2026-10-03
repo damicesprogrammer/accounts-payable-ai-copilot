@@ -81,12 +81,16 @@ Fases futuras adicionam `ai/` (providers de LLM), `tools/` (funções que o agen
 
 ```
 PENDENTE ──aprovar──► APROVADO ──(pagamentos = valor_total)──► PAGO
-   │  ▲                   │
-   │  └──reprocessar── ERRO ◄── falha de integração
-   └──────cancelar────────┴──► CANCELADO
+ ▲ │  ▲                   │                                       │
+ │ │  └──reprocessar── ERRO ◄── falha de integração               │
+ │ └──────cancelar────────┴──► CANCELADO                          │
+ └─────────────────────── estorno de pagamento ───────────────────┘
 ```
 
-`PAGO` e `CANCELADO` são finais. Dados e rateios só podem ser alterados em `PENDENTE` ou `ERRO`.
+- `CANCELADO` é final.
+- `PAGO` não aceita novos pagamentos, edição, alteração de rateios nem cancelamento. A única operação permitida é **estornar um pagamento confirmado**, que devolve o título para `PENDENTE` (não para `APROVADO`). Assim, ele precisa ser aprovado de novo antes de receber novos pagamentos.
+- Estorno em título `APROVADO` mantém o status e apenas recalcula o saldo.
+- Dados e rateios só podem ser alterados em `PENDENTE` ou `ERRO`.
 
 ### Regras de negócio
 
@@ -103,6 +107,8 @@ PENDENTE ──aprovar──► APROVADO ──(pagamentos = valor_total)──�
 | + | Pagamento somente para título APROVADO | `PagamentoService.registrar` | `TITULO_NAO_APROVADO` |
 | + | Pagamento não pode exceder o saldo pendente | `PagamentoService.registrar` | `PAGAMENTO_EXCEDE_SALDO` |
 | + | Título com pagamentos confirmados não pode ser cancelado | `TituloService.cancelar` | `TITULO_COM_PAGAMENTOS` |
+| + | Estorno em título PAGO reabre o título como PENDENTE | `PagamentoService.estornar` | — |
+| + | Valor do título não pode ficar abaixo do já pago (título reaberto) | `TituloService.atualizar` | `VALOR_MENOR_QUE_PAGO` |
 
 As regras 8–10 (IA nunca executa SQL, nunca acessa o banco diretamente, só usa tools explícitas) serão garantidas pela arquitetura das fases seguintes: as tools chamam services, não o banco.
 
@@ -144,7 +150,7 @@ As regras 8–10 (IA nunca executa SQL, nunca acessa o banco diretamente, só us
 | GET/POST | `/titulos/{id}/rateios` | Listar / adicionar rateio |
 | DELETE | `/titulos/{id}/rateios/{rateio_id}` | Remover rateio |
 | GET/POST | `/titulos/{id}/pagamentos` | Listar / registrar pagamento |
-| POST | `/titulos/{id}/pagamentos/{pagamento_id}/estornar` | Estornar pagamento |
+| POST | `/titulos/{id}/pagamentos/{pagamento_id}/estornar` | Estornar pagamento (título PAGO volta a PENDENTE) |
 | GET | `/titulos/{id}/logs` | Trilha de auditoria |
 
 ---
