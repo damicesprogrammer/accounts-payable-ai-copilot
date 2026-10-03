@@ -1,0 +1,2 @@
+# Scripts executados dentro de containers Linux precisam de LF
+* text=auto eol=lf
