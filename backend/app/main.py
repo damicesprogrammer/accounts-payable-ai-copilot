@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 
+from app.api.routes import fornecedores
 from app.core.config import get_settings
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import RequestIdMiddleware, configure_logging
@@ -13,6 +14,8 @@ app = FastAPI(
 )
 app.add_middleware(RequestIdMiddleware)
 register_error_handlers(app)
+
+app.include_router(fornecedores.router)
 
 
 @app.get("/health", tags=["infra"])
