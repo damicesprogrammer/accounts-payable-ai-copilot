@@ -508,11 +508,11 @@ Exit code `0` se todos os casos passarem, `1` se algum falhar e `2` em erro de c
 | Categoria | O que mede |
 |---|---|
 | `agent` | O agente escolhe as tools adequadas (dado do título, erro de integração, regras de estorno e de rateio, títulos por status, fornecedores) |
-| `finance` | Os números da resposta são os calculados pelo backend (vencidos, saldos) |
+| `finance` | Os números da resposta são os calculados pelo backend (vencidos, saldos); em en-US, os valores continuam em R$ |
 | `safety` | Recusa fora do domínio, "sem informação" no que não está documentado (PIX) e prompt injection (na pergunta e em um trecho de documentação simulado) |
 | `rag` | Retrieval separado da geração: seção esperada no top 3, com score, source e section registrados |
 
-- **Casos em JSON** (`backend/evals/cases/*.json`), um arquivo por categoria. Os checks verificam invariantes, nunca o texto exato: `required_tools ⊆ tools usadas` (tool extra legítima não reprova), `forbidden_tools`, `no_tools`, `expected_contains` (sem diferenciar maiúsculas, aceita alternativas), `forbidden_contains`, `max_answer_chars`, `expected_chunks` e `expect_no_sources`.
+- **Casos em JSON** (`backend/evals/cases/*.json`), um arquivo por categoria. Os checks verificam invariantes, nunca o texto exato: `required_tools ⊆ tools usadas` (tool extra legítima não reprova), `forbidden_tools`, `no_tools`, `expected_contains` (sem diferenciar maiúsculas, aceita alternativas), `forbidden_contains`, `max_answer_chars`, `expected_chunks`, `expect_no_sources`, `language` (`pt-BR` padrão ou `en-US`) e `brl_only` (exige `R$` e reprova `$` fora de `R$` ou `USD`).
 - **Sem números hardcoded:** placeholders como `{NF-9004}`, `{NF-9008.saldo_pendente}`, `{vencidos.quantidade}`, `{PENDENTE.quantidade}` e `{fornecedores_ativos.quantidade}` são resolvidos pelos services antes do eval; valores aceitam `197.225,78` ou `197225.78`.
 - **Invariantes em todo caso do agente:** nenhum flush no banco e nenhuma tool fora da allowlist executada.
 - **Métricas por caso:** aprovado ou não, motivo, duração, tools, chamadas ao LLM e tokens de entrada, saída e embeddings. Os tokens vêm dos logs que os providers já emitem: o runner não conhece a SDK.
@@ -521,9 +521,9 @@ Exit code `0` se todos os casos passarem, `1` se algum falhar e `2` em erro de c
 - **Tool inexistente** (ex.: `executar_sql`) não é induzida no modelo real: a recusa é determinística (`TOOL_NAO_PERMITIDA`) e já está coberta pelo pytest.
 - Não há LLM-as-a-judge, plataforma de observabilidade nem modo fake no runner: o objetivo é medir o modelo real.
 
-Última execução (24 casos): 24/24, ~54 s, 33 chamadas ao LLM e ~52 mil tokens. Cada chamada do agente consome ~1.200 tokens de entrada só com prompt e tools; uma pergunta fora do domínio usa uma única chamada.
+Última execução (25 casos): 25/25, ~52 s, 35 chamadas ao LLM e ~55 mil tokens. Cada chamada do agente consome ~1.200 tokens de entrada só com prompt e tools; uma pergunta fora do domínio usa uma única chamada.
 
-**O placar mede só os cenários definidos.** Um 20/20 não significava que o agente acertava qualquer pergunta: depois dele, "Quantos títulos pendentes temos?" foi respondida manualmente com os 16 *vencidos* em aberto, porque nenhuma tool consultava por status e o modelo usou a mais próxima. O ciclo foi: falha manual → investigação → nova capacidade (`get_titulos_por_status`, `get_fornecedores`) → novos casos permanentes (`agent_titulos_pendentes`, `agent_titulos_aprovados`, `agent_fornecedores_total`, `agent_fornecedores_ativos`). Falhas encontradas em uso real devem sempre virar evals de regressão.
+**O placar mede só os cenários definidos.** Um 20/20 não significava que o agente acertava qualquer pergunta: depois dele, "Quantos títulos pendentes temos?" foi respondida manualmente com os 16 *vencidos* em aberto, porque nenhuma tool consultava por status e o modelo usou a mais próxima. O ciclo foi: falha manual → investigação → nova capacidade (`get_titulos_por_status`, `get_fornecedores`) → novos casos permanentes (`agent_titulos_pendentes`, `agent_titulos_aprovados`, `agent_fornecedores_total`, `agent_fornecedores_ativos`). Falhas encontradas em uso real devem sempre virar evals de regressão. O mesmo aconteceu com o idioma: na validação manual em en-US, o agente escreveu "$197,225.78" (dólar) para valores em reais; o caso `finance_vencidos_en_us_preserva_brl` registra que o idioma muda o texto, mas não a moeda do domínio. A suíte não é duplicada em inglês: é o único caso en-US.
 
 **Observação de retrieval (medida, não corrigida):** os scores das seções relevantes ficam próximos (≈0,50–0,72) e, em "Quando um título não pode mais ser cancelado?", `regras_titulos.md › Cancelamento` aparece em 4º, atrás de `manual_financeiro.md › Fluxo de cancelamento`, que também responde. Como o agente recebe o top 5, não houve impacto na resposta. Perguntas fora do domínio ficam bem abaixo (≈0,15). Nenhum threshold, reranker ou busca híbrida foi adicionado.
 
@@ -549,6 +549,7 @@ O navegador nunca fala com a OpenAI. A `OPENAI_API_KEY` fica só na API; o front
 
 - **Backend calcula, frontend apresenta:** valor rateado, pago, saldo pendente e vencido vêm prontos da API; o frontend só formata (`Intl.NumberFormat` em BRL, datas `dd/mm/aaaa`).
 - **Sem camadas extras:** `fetch`, `useState`/`useEffect` e um hook `useApi` de poucas linhas; sem state management global, sem biblioteca de componentes.
+- **Idioma EN-US / PT-BR:** botão no cabeçalho alterna os textos da interface (`src/i18n.ts`, dois dicionários tipados, sem biblioteca). A escolha fica no `localStorage` do navegador; padrão EN-US. As perguntas sugeridas e a **resposta do Copilot** acompanham o idioma: o frontend envia `language` (`pt-BR` | `en-US`, padrão `pt-BR`) em `POST /ai/copilot`, e só a regra de idioma do prompt muda (em inglês, status como `PENDENTE`, códigos e valores em R$ ficam como no sistema). Dados do sistema (status, nomes, mensagens da API) não são traduzidos; valores seguem em BRL e datas em `dd/mm/aaaa`.
 - O loading do Copilot é só "Analyzing...": o backend não transmite etapas intermediárias, então a UI não as simula.
 - `POST /ai/ask` (RAG) não tem tela própria; continua disponível pelo OpenAPI.
 - A API libera CORS somente para `http://localhost:5173` (`CORS_ORIGINS`, lista JSON).
