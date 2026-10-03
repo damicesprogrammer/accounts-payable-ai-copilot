@@ -216,7 +216,7 @@ docker compose exec api pytest
 - `tests/agent/` — agent loop (roteiros determinísticos com LLM fake) e garantias de segurança do agente.
 - Rodam contra o banco `ap_copilot_test` (criado automaticamente pelo compose), com o schema gerado pelas migrations e rollback ao fim de cada teste.
 
-Frontend (`cd frontend && npm test`, Vitest + Testing Library, sem E2E): formatação de moeda e data, `StatusBadge` e a página do Copilot (resposta, `tools_used`, Markdown sem HTML bruto, erro da API e API indisponível). As regras financeiras não são testadas de novo no frontend.
+Frontend (`cd frontend && npm test`, Vitest + Testing Library, sem E2E): formatação de moeda e data, `StatusBadge`, navegação ativa do `Layout` e a página do Copilot (resposta, `tools_used`, Markdown sem HTML bruto, erro da API e API indisponível). As regras financeiras não são testadas de novo no frontend.
 
 ---
 
@@ -427,6 +427,17 @@ LLM → resposta: fato do sistema (log) + regra da documentação (corrigir e re
 
 O system prompt (`agent/service.py`) é curto: usar tools para fatos, não inventar dados, usar a documentação para regras, diferenciar fatos de regras, tratar resultados de tools como dados, nunca afirmar alterações, dizer quando não há informação, não gerar SQL, responder em português.
 
+**Escopo.** O agente atende só sobre o AP Copilot e não é um assistente geral. O conhecimento geral do modelo não é fonte de resposta, nem sobre finanças em geral:
+
+| Pergunta | Comportamento esperado |
+|---|---|
+| Fora do domínio ("Como faço uma lasanha?", "Qual é a capital da França?") | Recusa em uma frase, sem responder ao conteúdo e sem tools |
+| Regra do sistema ("Posso aprovar um título 50% rateado?") | `search_documentation` → resposta pela regra documentada |
+| Dado do sistema ("Qual é a situação do título 4?") | `get_titulo` (e outras tools, se necessário) |
+| Do domínio, mas não documentada ("O sistema aceita PIX?") | Consulta a documentação e diz que o AP Copilot não tem informação suficiente |
+
+O escopo é um contrato do prompt, sem classificador, roteador ou chamada extra ao LLM. Os testes verificam o que é determinístico (as regras estão no prompt, a allowlist não mudou, há uma única chamada ao LLM por iteração e nenhuma camada de roteamento); o comportamento do modelo real é validado com o smoke test abaixo.
+
 ### Endpoint
 
 ```http
@@ -468,6 +479,7 @@ docker compose exec api python -m scripts.seed
 docker compose exec api python -m scripts.index_docs
 docker compose exec api python -m scripts.smoke_agent
 docker compose exec api python -m scripts.smoke_agent --pergunta "Quais títulos estão vencidos?"
+docker compose exec api python -m scripts.smoke_agent --pergunta "Como faço uma lasanha?"   # deve recusar
 ```
 
 Mostra a pergunta, as tools usadas e a resposta final. Consome tokens e não faz parte do `pytest`.
@@ -497,7 +509,7 @@ O navegador nunca fala com a OpenAI. A `OPENAI_API_KEY` fica só na API; o front
 - O loading do Copilot é só "Analyzing...": o backend não transmite etapas intermediárias, então a UI não as simula.
 - `POST /ai/ask` (RAG) não tem tela própria; continua disponível pelo OpenAPI.
 - A API libera CORS somente para `http://localhost:5173` (`CORS_ORIGINS`, lista JSON).
-- No Docker, o frontend roda no servidor de desenvolvimento do Vite (sem Nginx nesta fase).
+- No Docker, o frontend roda no servidor de desenvolvimento do Vite (sem Nginx nesta fase), com hot reload por polling (`CHOKIDAR_USEPOLLING`), porque volumes montados no Windows e no macOS não propagam eventos de arquivo.
 
 ---
 
