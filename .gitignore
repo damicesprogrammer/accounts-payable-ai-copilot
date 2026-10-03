@@ -15,3 +15,8 @@ htmlcov/
 .idea/
 .DS_Store
 Thumbs.db
+# Playwright CLI output (may contain credentials)
+.playwright-cli/
+.claude/skills/playwright-cli/
+# Roteiros de tarefa locais do Claude Code
+.claude/fase5-correcao.md
