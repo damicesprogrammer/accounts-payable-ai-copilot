@@ -14,6 +14,7 @@ from app.schemas.titulo import (
     TituloCreate,
     TituloDetalhe,
     TituloRead,
+    TitulosPorStatus,
     TitulosVencidos,
     TituloUpdate,
 )
@@ -83,6 +84,15 @@ class TituloService:
             valor_total_titulos=sum((t.valor_total for t in titulos), Decimal("0.00")),
             saldo_pendente_total=sum((t.saldo_pendente for t in titulos), Decimal("0.00")),
             titulos=titulos,
+        )
+
+    def resumo_por_status(self, status: StatusTitulo) -> TitulosPorStatus:
+        """Todos os títulos de um status (sem paginação), com a quantidade calculada aqui."""
+        titulos = self.listar(status=status, limit=None)
+        return TitulosPorStatus(
+            status=status,
+            quantidade=len(titulos),
+            titulos=[TituloRead.model_validate(t) for t in titulos],
         )
 
     def _detalhar(self, titulo: TituloPagar, hoje: date) -> TituloDetalhe:

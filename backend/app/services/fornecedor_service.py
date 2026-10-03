@@ -5,7 +5,12 @@ from sqlalchemy.orm import Session
 from app.core.exceptions import ConflictError, NotFoundError
 from app.models import Fornecedor, TipoLog
 from app.repositories.fornecedor_repository import FornecedorRepository
-from app.schemas.fornecedor import FornecedorCreate, FornecedorUpdate
+from app.schemas.fornecedor import (
+    FornecedorCreate,
+    FornecedoresResumo,
+    FornecedorRead,
+    FornecedorUpdate,
+)
 from app.services.audit_service import AuditService
 
 
@@ -16,9 +21,17 @@ class FornecedorService:
         self.audit = AuditService(db)
 
     def listar(
-        self, *, ativo: bool | None = None, limit: int = 50, offset: int = 0
+        self, *, ativo: bool | None = None, limit: int | None = 50, offset: int = 0
     ) -> Sequence[Fornecedor]:
         return self.repo.list(ativo=ativo, limit=limit, offset=offset)
+
+    def resumo(self, *, ativo: bool | None = None) -> FornecedoresResumo:
+        """Todos os fornecedores do filtro (sem paginação), com a quantidade calculada aqui."""
+        fornecedores = self.listar(ativo=ativo, limit=None)
+        return FornecedoresResumo(
+            quantidade=len(fornecedores),
+            fornecedores=[FornecedorRead.model_validate(f) for f in fornecedores],
+        )
 
     def obter(self, fornecedor_id: int) -> Fornecedor:
         fornecedor = self.repo.get(fornecedor_id)

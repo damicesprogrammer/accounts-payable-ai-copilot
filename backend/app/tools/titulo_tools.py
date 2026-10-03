@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy.orm import Session
 
+from app.models import StatusTitulo
 from app.schemas.log import LogRead
 from app.schemas.pagamento import PagamentoRead
 from app.schemas.rateio import RateioRead
@@ -40,6 +41,16 @@ _CAMPOS_VENCIDOS = {
 }
 
 
+# Quantidade calculada pelo sistema + o básico de cada título (sem saldo/rateios: evita N+1).
+_CAMPOS_POR_STATUS = {
+    "status": True,
+    "quantidade": True,
+    "titulos": {
+        "__all__": {"id", "numero", "fornecedor", "data_vencimento", "valor_total", "status"}
+    },
+}
+
+
 class TituloIdInput(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
@@ -48,6 +59,12 @@ class TituloIdInput(BaseModel):
 
 class SemArgumentos(BaseModel):
     model_config = ConfigDict(extra="forbid")
+
+
+class StatusInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: StatusTitulo = Field(description="Status do workflow do título.")
 
 
 def _get_titulo(db: Session, args: TituloIdInput) -> dict[str, Any]:
@@ -73,6 +90,11 @@ def _get_logs_titulo(db: Session, args: TituloIdInput) -> list[dict[str, Any]]:
 def _get_titulos_vencidos(db: Session, args: SemArgumentos) -> dict[str, Any]:
     resumo = TituloService(db).resumo_vencidos()
     return resumo.model_dump(mode="json", include=_CAMPOS_VENCIDOS)
+
+
+def _get_titulos_por_status(db: Session, args: StatusInput) -> dict[str, Any]:
+    resumo = TituloService(db).resumo_por_status(args.status)
+    return resumo.model_dump(mode="json", include=_CAMPOS_POR_STATUS)
 
 
 get_titulo = Tool(
@@ -112,10 +134,22 @@ get_logs_titulo = Tool(
 get_titulos_vencidos = Tool(
     name="get_titulos_vencidos",
     description=(
-        "Lista os títulos em aberto (PENDENTE, APROVADO ou ERRO) com vencimento anterior a "
-        "hoje, com quantidade, valor_total_titulos (soma dos valores originais) e "
+        "Consulta títulos cuja data de vencimento já passou e que continuam em aberto "
+        "(PENDENTE, APROVADO ou ERRO). Use só para vencidos/atrasados, não para contar por "
+        "status. Traz quantidade, valor_total_titulos (soma dos valores originais) e "
         "saldo_pendente_total (soma do que falta pagar) já calculados pelo sistema."
     ),
     input_model=SemArgumentos,
     handler=_get_titulos_vencidos,
+)
+
+get_titulos_por_status = Tool(
+    name="get_titulos_por_status",
+    description=(
+        "Consulta títulos por um status específico do workflow (PENDENTE, APROVADO, PAGO, "
+        "CANCELADO ou ERRO), independente do vencimento. Ex.: quantos títulos pendentes, "
+        "quais estão aprovados, existem títulos em erro. Traz a quantidade já calculada."
+    ),
+    input_model=StatusInput,
+    handler=_get_titulos_por_status,
 )

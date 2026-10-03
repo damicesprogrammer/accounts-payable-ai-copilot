@@ -5,7 +5,14 @@ import pytest
 from app.ai.contracts import ChatMessage, LLMResponse, ToolCall
 from app.ai.providers.fake import FakeLLMProvider
 from app.tools.registry import criar_registry_financeiro
-from tests.factories import criar_centro_custo, criar_titulo, criar_titulo_aprovado, pagar, ratear
+from tests.factories import (
+    criar_centro_custo,
+    criar_fornecedor,
+    criar_titulo,
+    criar_titulo_aprovado,
+    pagar,
+    ratear,
+)
 
 HOJE = date.today()
 
@@ -110,6 +117,73 @@ def test_get_titulos_vencidos_devolve_totais_calculados_pelo_sistema(registry, d
         "700.00",
     )
     assert primeiro["fornecedor"]["nome"] == parcial.fornecedor.nome
+
+
+@pytest.mark.parametrize("status", ["PENDENTE", "APROVADO"])
+def test_get_titulos_por_status_devolve_so_o_status_pedido(registry, db, status):
+    pendentes = [criar_titulo(db), criar_titulo(db)]
+    aprovado = criar_titulo_aprovado(db)
+    esperados = {"PENDENTE": [t.id for t in pendentes], "APROVADO": [aprovado.id]}[status]
+
+    resultado = _executar(registry, db, "get_titulos_por_status", status=status)
+
+    data = resultado.data
+    assert data["status"] == status
+    assert data["quantidade"] == len(esperados)  # calculada pelo sistema, não pelo LLM
+    assert sorted(t["id"] for t in data["titulos"]) == sorted(esperados)
+    assert {t["status"] for t in data["titulos"]} == {status}
+    # Só o básico: sem saldo, rateios ou pagamentos (nenhuma consulta extra por título).
+    assert set(data["titulos"][0]) == {
+        "id",
+        "numero",
+        "fornecedor",
+        "data_vencimento",
+        "valor_total",
+        "status",
+    }
+
+
+def test_get_titulos_por_status_sem_titulos(registry, db):
+    criar_titulo(db)
+
+    resultado = _executar(registry, db, "get_titulos_por_status", status="ERRO")
+
+    assert resultado.data == {"status": "ERRO", "quantidade": 0, "titulos": []}
+
+
+def test_get_titulos_por_status_quantidade_nao_e_truncada_pela_paginacao(registry, db):
+    fornecedor = criar_fornecedor(db)
+    acima_do_limite_padrao = 51  # listar() pagina em 50 por padrão
+    for _ in range(acima_do_limite_padrao):
+        criar_titulo(db, fornecedor=fornecedor)
+
+    resultado = _executar(registry, db, "get_titulos_por_status", status="PENDENTE")
+
+    assert resultado.data["quantidade"] == acima_do_limite_padrao
+    assert len(resultado.data["titulos"]) == acima_do_limite_padrao
+
+
+@pytest.mark.parametrize("status", ["pendente", "VENCIDO", "EM_ABERTO", "", None])
+def test_get_titulos_por_status_recusa_status_fora_do_enum(registry, db, status):
+    resultado = _executar(registry, db, "get_titulos_por_status", status=status)
+
+    assert resultado.ok is False
+    assert resultado.error.code == "ARGUMENTOS_INVALIDOS"
+
+
+def test_status_e_vencimento_sao_consultas_independentes(registry, db):
+    """PENDENTE é status; VENCIDO depende da data. Um não substitui o outro."""
+    passado = HOJE - timedelta(days=30)
+    pendente_a_vencer = criar_titulo(db, emissao=HOJE, vencimento=HOJE + timedelta(days=5))
+    aprovado_vencido = criar_titulo_aprovado(
+        db, emissao=passado, vencimento=HOJE - timedelta(days=1)
+    )
+
+    por_status = _executar(registry, db, "get_titulos_por_status", status="PENDENTE").data
+    vencidos = _executar(registry, db, "get_titulos_vencidos").data
+
+    assert [t["id"] for t in por_status["titulos"]] == [pendente_a_vencer.id]
+    assert [t["id"] for t in vencidos["titulos"]] == [aprovado_vencido.id]
 
 
 def test_fluxo_llm_tool_call_ate_o_service(registry, db):

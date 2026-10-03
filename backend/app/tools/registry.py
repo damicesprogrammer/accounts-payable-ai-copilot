@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 from app.ai.contracts import EmbeddingProvider, ToolCall, ToolDefinition
 from app.ai.exceptions import LLMError
 from app.core.exceptions import DomainError
-from app.tools import documentacao_tools, titulo_tools
+from app.tools import documentacao_tools, fornecedor_tools, titulo_tools
 from app.tools.contracts import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -96,5 +96,7 @@ def criar_registry_financeiro(embeddings: EmbeddingProvider | None = None) -> To
     registry.register(titulo_tools.get_pagamentos_titulo)
     registry.register(titulo_tools.get_logs_titulo)
     registry.register(titulo_tools.get_titulos_vencidos)
+    registry.register(titulo_tools.get_titulos_por_status)
+    registry.register(fornecedor_tools.get_fornecedores)
     registry.register(documentacao_tools.search_documentation(embeddings))
     return registry

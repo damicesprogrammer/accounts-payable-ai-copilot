@@ -66,6 +66,8 @@ def test_resposta_direta_sem_tools(db):
         "get_pagamentos_titulo",
         "get_logs_titulo",
         "get_titulos_vencidos",
+        "get_titulos_por_status",
+        "get_fornecedores",
         "search_documentation",
     }
 

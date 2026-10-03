@@ -71,3 +71,11 @@ class TitulosVencidos(ReadSchema):
     valor_total_titulos: Decimal  # soma do valor original dos títulos
     saldo_pendente_total: Decimal  # soma do que ainda falta pagar
     titulos: list[TituloDetalhe]
+
+
+class TitulosPorStatus(ReadSchema):
+    """Todos os títulos de um status; `quantidade` é calculada pelo sistema."""
+
+    status: StatusTitulo
+    quantidade: int
+    titulos: list[TituloRead]

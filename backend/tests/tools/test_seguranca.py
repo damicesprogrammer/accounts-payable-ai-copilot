@@ -38,6 +38,8 @@ ALLOWLIST = {
     "get_pagamentos_titulo",
     "get_logs_titulo",
     "get_titulos_vencidos",
+    "get_titulos_por_status",
+    "get_fornecedores",
     "search_documentation",
 }
 
@@ -117,6 +119,26 @@ def test_argumentos_maliciosos_sao_recusados_antes_da_execucao(registry, db, arg
     assert _snapshot(db) == antes
 
 
+@pytest.mark.parametrize(
+    ("nome", "arguments"),
+    [
+        ("get_titulos_por_status", {"status": "PENDENTE' OR 1=1 --"}),
+        ("get_titulos_por_status", {"status": "PENDENTE", "order_by": "valor_total"}),
+        ("get_fornecedores", {"ativo": "true OR 1=1"}),
+        ("get_fornecedores", {"ativo": True, "nome": "%"}),
+    ],
+)
+def test_filtros_das_tools_de_consulta_sao_tipados(registry, db, nome, arguments):
+    """Só status (enum) e ativo (bool): nada de filtros, colunas ou operadores livres."""
+    criar_titulo(db)
+    antes = _snapshot(db)
+
+    resultado = registry.execute(ToolCall(id="c", name=nome, arguments=arguments), db)
+
+    assert resultado.error.code == "ARGUMENTOS_INVALIDOS"
+    assert _snapshot(db) == antes
+
+
 # ---------------------------------------------------------------- somente leitura
 
 
@@ -137,6 +159,8 @@ def test_nenhuma_tool_altera_dados(registry, db):
         for nome in registry.names:
             args = {
                 "get_titulos_vencidos": {},
+                "get_titulos_por_status": {"status": "APROVADO"},
+                "get_fornecedores": {},
                 "search_documentation": {"query": "estorno"},
             }.get(nome, {"titulo_id": titulo.id})
             assert registry.execute(_call(nome, **args), db).ok is True
@@ -175,7 +199,7 @@ def test_get_titulos_vencidos_calcula_totais_sem_alterar_dados(registry, db):
 
 def test_tools_nao_acessam_repositories_sql_nem_commit():
     """As tools só podem falar com services."""
-    for modulo in ("titulo_tools.py", "documentacao_tools.py"):
+    for modulo in ("titulo_tools.py", "fornecedor_tools.py", "documentacao_tools.py"):
         fonte = (APP_DIR / "tools" / modulo).read_text(encoding="utf-8")
         for proibido in ("app.repositories", "sqlalchemy import text", ".execute(", ".commit("):
             assert proibido not in fonte, f"{modulo}: {proibido}"

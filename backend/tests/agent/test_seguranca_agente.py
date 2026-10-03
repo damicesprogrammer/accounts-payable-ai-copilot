@@ -116,6 +116,8 @@ def test_agente_com_todas_as_tools_nao_altera_dados(db):
                 ("c4", "get_logs_titulo", {"titulo_id": titulo.id}),
                 ("c5", "get_titulos_vencidos", {}),
                 ("c6", "search_documentation", {"query": "estorno"}),
+                ("c7", "get_titulos_por_status", {"status": "APROVADO"}),
+                ("c8", "get_fornecedores", {"ativo": True}),
             ),
             "Resumo.",
         ]

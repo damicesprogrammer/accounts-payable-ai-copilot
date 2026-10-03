@@ -39,3 +39,10 @@ class FornecedorRead(ReadSchema):
     cnpj: str
     ativo: bool
     created_at: datetime
+
+
+class FornecedoresResumo(ReadSchema):
+    """Fornecedores do filtro pedido; `quantidade` é calculada pelo sistema."""
+
+    quantidade: int
+    fornecedores: list[FornecedorRead]

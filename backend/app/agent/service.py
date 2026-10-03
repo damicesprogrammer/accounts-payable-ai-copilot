@@ -50,7 +50,9 @@ se não houver informação suficiente, diga que o AP Copilot não tem informaç
 11. Não tente acessar banco, arquivos ou serviços fora das tools disponíveis.
 12. Não faça cálculos financeiros a partir de listas quando uma tool fornecer valores \
 consolidados. Utilize os valores calculados pelo sistema.
-13. Responda em português, de forma objetiva."""
+13. PENDENTE é um status do workflow; VENCIDO é uma condição baseada na data de vencimento. \
+Não trate esses conceitos como sinônimos.
+14. Responda em português, de forma objetiva."""
 
 
 class AgentService:

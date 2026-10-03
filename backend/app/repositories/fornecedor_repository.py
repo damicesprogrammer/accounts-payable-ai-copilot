@@ -13,7 +13,7 @@ class FornecedorRepository(BaseRepository[Fornecedor]):
         return self.db.scalar(select(Fornecedor).where(Fornecedor.cnpj == cnpj))
 
     def list(
-        self, *, ativo: bool | None = None, limit: int = 50, offset: int = 0
+        self, *, ativo: bool | None = None, limit: int | None = 50, offset: int = 0
     ) -> Sequence[Fornecedor]:
         stmt = select(Fornecedor).order_by(Fornecedor.nome).limit(limit).offset(offset)
         if ativo is not None:
