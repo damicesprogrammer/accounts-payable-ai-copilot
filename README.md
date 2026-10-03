@@ -1,3 +1,8 @@
+<p align="right">
+  <a href="README.pt-BR.md">Português</a> ·
+  <strong>English</strong>
+</p>
+
 # AP Copilot
 
 > **AI Engineering applied to Accounts Payable** — deterministic financial rules, typed tool calling, RAG with pgvector, a controlled agent loop, and real-model evaluations.
