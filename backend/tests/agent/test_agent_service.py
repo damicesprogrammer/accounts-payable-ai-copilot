@@ -5,6 +5,7 @@ As tools são as reais (ToolRegistry → services → PostgreSQL de teste).
 
 import json
 import logging
+from datetime import date, timedelta
 
 import pytest
 
@@ -17,7 +18,7 @@ from app.rag.service import RAGService
 from app.schemas.agent import ToolUsada
 from app.services.titulo_service import TituloService
 from app.tools.registry import criar_registry_financeiro
-from tests.factories import criar_titulo, criar_titulo_aprovado
+from tests.factories import criar_titulo, criar_titulo_aprovado, pagar
 
 DOC_CENTRO_INEXISTENTE = Chunk(
     "erros_integracao.md",
@@ -132,6 +133,29 @@ def test_fluxo_multi_step_decidido_pelo_modelo(db):
         DOC_CENTRO_INEXISTENTE.section,
     )
     assert len(llm.chamadas[3]["messages"]) == 2 + 3 * 2  # system, user + 3 (pedido, resultado)
+
+
+# ---------------------------------------------------------------- totais calculados pelo sistema
+
+
+def test_titulos_vencidos_chegam_ao_modelo_com_totais_do_sistema(db):
+    passado = date.today() - timedelta(days=30)
+    parcial = criar_titulo_aprovado(
+        db, valor="1000.00", emissao=passado, vencimento=date.today() - timedelta(days=2)
+    )
+    pagar(db, parcial, "250.00")
+    criar_titulo(db, valor="99.99", emissao=passado, vencimento=date.today() - timedelta(days=1))
+    agente, llm = _agente(db, [_pede(("c1", "get_titulos_vencidos", {})), "Há 2 títulos vencidos."])
+
+    resposta = agente.run("Quais títulos estão vencidos?")
+
+    assert resposta.tools_used == [ToolUsada(name="get_titulos_vencidos", ok=True)]
+    dados = _resultado(llm.chamadas[1]["messages"][-1])["data"]
+    # O modelo recebe os totais prontos: não precisa somar a lista.
+    assert dados["quantidade"] == 2
+    assert dados["valor_total_titulos"] == "1099.99"
+    assert dados["saldo_pendente_total"] == "849.99"
+    assert len(dados["titulos"]) == 2
 
 
 # ---------------------------------------------------------------- caso 4: várias tools juntas

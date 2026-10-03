@@ -76,15 +76,40 @@ def test_get_logs_titulo(registry, db):
     assert [log["tipo"] for log in resultado.data] == ["CRIACAO"]
 
 
-def test_get_titulos_vencidos(registry, db):
-    vencido = criar_titulo(
-        db, emissao=HOJE - timedelta(days=30), vencimento=HOJE - timedelta(days=1)
+def test_get_titulos_vencidos_devolve_totais_calculados_pelo_sistema(registry, db):
+    passado = HOJE - timedelta(days=30)
+    parcial = criar_titulo_aprovado(
+        db, valor="1000.00", emissao=passado, vencimento=HOJE - timedelta(days=2)
     )
+    pagar(db, parcial, "300.00")
+    aberto = criar_titulo(db, valor="0.10", emissao=passado, vencimento=HOJE - timedelta(days=1))
     criar_titulo(db, emissao=HOJE, vencimento=HOJE + timedelta(days=10))
 
     resultado = _executar(registry, db, "get_titulos_vencidos")
 
-    assert [t["id"] for t in resultado.data] == [vencido.id]
+    data = resultado.data
+    assert data["quantidade"] == 2
+    # Strings com 2 casas (Decimal serializado), nunca float.
+    assert data["valor_total_titulos"] == "1000.10"
+    assert data["saldo_pendente_total"] == "700.10"  # 700.00 pendente + 0.10
+    assert [t["id"] for t in data["titulos"]] == [parcial.id, aberto.id]
+    primeiro = data["titulos"][0]
+    assert set(primeiro) == {
+        "id",
+        "numero",
+        "fornecedor",
+        "status",
+        "data_vencimento",
+        "valor_total",
+        "valor_pago",
+        "saldo_pendente",
+    }
+    assert (primeiro["valor_total"], primeiro["valor_pago"], primeiro["saldo_pendente"]) == (
+        "1000.00",
+        "300.00",
+        "700.00",
+    )
+    assert primeiro["fornecedor"]["nome"] == parcial.fornecedor.nome
 
 
 def test_fluxo_llm_tool_call_ate_o_service(registry, db):

@@ -8,6 +8,7 @@
 """
 
 import ast
+from datetime import date, timedelta
 from pathlib import Path
 
 import pytest
@@ -143,6 +144,31 @@ def test_nenhuma_tool_altera_dados(registry, db):
         event.remove(db, "after_flush", registrar_flush)
 
     assert escritas == []  # nenhum INSERT/UPDATE/DELETE chegou ao banco
+    assert not (db.new or db.dirty or db.deleted)
+    assert _snapshot(db) == antes
+
+
+def test_get_titulos_vencidos_calcula_totais_sem_alterar_dados(registry, db):
+    passado = date.today() - timedelta(days=30)
+    titulo = criar_titulo_aprovado(
+        db, valor="500.00", emissao=passado, vencimento=date.today() - timedelta(days=1)
+    )
+    pagar(db, titulo, "100.00")
+    antes = _snapshot(db)
+
+    escritas = []
+
+    def registrar_flush(session, flush_context):
+        escritas.append(True)
+
+    event.listen(db, "after_flush", registrar_flush)
+    try:
+        resultado = registry.execute(_call("get_titulos_vencidos"), db)
+    finally:
+        event.remove(db, "after_flush", registrar_flush)
+
+    assert resultado.data["saldo_pendente_total"] == "400.00"
+    assert escritas == []
     assert not (db.new or db.dirty or db.deleted)
     assert _snapshot(db) == antes
 
