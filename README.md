@@ -4,7 +4,7 @@ Módulo simplificado de **Títulos a Pagar** com um Copilot de IA (em construç�
 
 O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio reais e bem testadas, que serve de base para demonstrar engenharia de IA aplicada — tool calling, RAG, embeddings e agentes — **sem** abrir mão de segurança: o LLM nunca acessa o banco nem executa SQL, apenas chama ferramentas explícitas da aplicação.
 
-> **Status:** Fases 1 (backend financeiro) e 2 (fundação de LLM e tool calling) concluídas. Veja o [roadmap](#roadmap).
+> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling) e 3 (RAG com pgvector) concluídas. Veja o [roadmap](#roadmap).
 
 ---
 
@@ -15,7 +15,7 @@ O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio rea
 | API | Python 3.12, FastAPI, Pydantic v2 |
 | Persistência | PostgreSQL 16 (imagem com pgvector), SQLAlchemy 2.0, Alembic |
 | Qualidade | pytest (contra Postgres real), Ruff |
-| IA | SDK oficial da OpenAI (atrás de um contrato próprio), Pydantic para structured outputs |
+| IA | SDK oficial da OpenAI (atrás de um contrato próprio), Pydantic para structured outputs, pgvector para busca semântica |
 | Infra | Docker, Docker Compose, uv |
 
 ## Como executar
@@ -25,6 +25,7 @@ Pré-requisito: Docker com Docker Compose.
 ```bash
 docker compose up -d --build                       # sobe Postgres + API (aplica migrations)
 docker compose exec api python -m scripts.seed     # popula com dados sintéticos
+docker compose exec api python -m scripts.index_docs  # indexa a base de conhecimento (requer OPENAI_API_KEY)
 ```
 
 - API: http://localhost:8000
@@ -58,11 +59,9 @@ HTTP ──► api/routes ──► services ──► repositories ──► Po
 | `repositories/` | Acesso a dados (queries). Sem regras, sem commit. |
 | `models/` | Entidades ORM e constraints de banco. |
 | `core/` | Configuração, sessão de banco, exceções, logging estruturado. |
-
-| `ai/` | Contrato do LLM e providers (OpenAI e fake para testes). Ver [Camada de IA](#camada-de-ia). |
+| `ai/` | Contratos de LLM e embeddings e seus providers (OpenAI e fake para testes). Ver [Camada de IA](#camada-de-ia). |
 | `tools/` | Funções que o LLM pode solicitar (allowlist explícita). Chamam services, nunca repositories. |
-
-Fases futuras adicionam `rag/`.
+| `rag/` | RAG manual: chunking por seção Markdown e `RAGService` (indexar, search, answer). Ver [RAG](#rag-base-de-conhecimento). |
 
 ### Decisões técnicas
 
@@ -114,7 +113,7 @@ PENDENTE ──aprovar──► APROVADO ──(pagamentos = valor_total)──�
 | + | Estorno em título PAGO reabre o título como PENDENTE | `PagamentoService.estornar` | — |
 | + | Valor do título não pode ficar abaixo do já pago (título reaberto) | `TituloService.atualizar` | `VALOR_MENOR_QUE_PAGO` |
 
-As regras 8–10 (IA nunca executa SQL, nunca acessa o banco diretamente, só usa tools explícitas) serão garantidas pela arquitetura das fases seguintes: as tools chamam services, não o banco.
+As regras 8–10 (IA nunca executa SQL, nunca acessa o banco diretamente, só usa tools explícitas) são garantidas pela arquitetura: o LLM só pede tools da allowlist, e as tools chamam services, não o banco.
 
 ### Formato de erro
 
@@ -156,6 +155,7 @@ As regras 8–10 (IA nunca executa SQL, nunca acessa o banco diretamente, só us
 | GET/POST | `/titulos/{id}/pagamentos` | Listar / registrar pagamento |
 | POST | `/titulos/{id}/pagamentos/{pagamento_id}/estornar` | Estornar pagamento (título PAGO volta a PENDENTE) |
 | GET | `/titulos/{id}/logs` | Trilha de auditoria |
+| POST | `/ai/ask` | Pergunta sobre as regras do AP Copilot, respondida por RAG com fontes |
 
 ---
 
@@ -189,17 +189,18 @@ docker compose exec api pytest
 - `tests/api/` — fluxos HTTP de ponta a ponta e formato de erro.
 - `tests/ai/` — providers (fake e OpenAI com cliente substituto: sem rede, sem tokens, sem API key).
 - `tests/tools/` — registry, tools financeiras e garantias de segurança.
+- `tests/rag/` — chunking, indexação, busca no pgvector e resposta com validação de fontes (embeddings e LLM fake).
 - Rodam contra o banco `ap_copilot_test` (criado automaticamente pelo compose), com o schema gerado pelas migrations e rollback ao fim de cada teste.
 
 ---
 
 ## Camada de IA
 
-Nesta fase existem apenas os blocos fundamentais: contrato de LLM, provider OpenAI, tool calling e structured outputs. **Ainda não há loop de agente, RAG nem tools de escrita.**
+Blocos fundamentais: contrato de LLM, provider OpenAI, tool calling, structured outputs, embeddings e RAG. **Ainda não há loop de agente nem tools de escrita.**
 
 ```
 LLMProvider.generate(mensagens, tools)      ← contrato próprio (ai/contracts.py)
-   └─ OpenAIProvider                        ← único módulo que conhece a SDK
+   └─ OpenAIProvider                        ← único módulo de chat que conhece a SDK
         └─ resposta normalizada: LLMResponse { content, tool_calls: [ToolCall] }
 
 ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repository ─► PostgreSQL
@@ -207,28 +208,32 @@ ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repositor
               ├─ nome fora da allowlist   → TOOL_NAO_PERMITIDA
               ├─ argumentos inválidos     → ARGUMENTOS_INVALIDOS (validação Pydantic)
               ├─ DomainError              → código do domínio (ex.: TITULO_NAO_ENCONTRADO)
+              ├─ erro da camada de IA     → IA_INDISPONIVEL (ex.: sem API key)
               └─ erro inesperado          → ERRO_INTERNO (detalhes só no log do servidor)
 ```
 
 | Arquivo | Conteúdo |
 |---|---|
-| `ai/contracts.py` | `ChatMessage`, `ToolDefinition`, `ToolCall`, `LLMResponse`, `TokenUsage` e o `Protocol` `LLMProvider` |
+| `ai/contracts.py` | `ChatMessage`, `ToolDefinition`, `ToolCall`, `LLMResponse`, `TokenUsage` e os `Protocol`s `LLMProvider` e `EmbeddingProvider` |
 | `ai/exceptions.py` | `LLMConfigurationError`, `LLMTimeoutError`, `LLMProviderError`, `LLMStructuredOutputError` |
-| `ai/providers/openai.py` | Conversão de/para a SDK da OpenAI, tradução de erros, log de metadados |
-| `ai/providers/fake.py` | Provider roteirizado para testes |
-| `ai/providers/__init__.py` | `get_llm_provider()`: escolhe o provider pela configuração |
+| `ai/providers/openai.py` | Chat: conversão de/para a SDK da OpenAI, tradução de erros, log de metadados |
+| `ai/providers/openai_embeddings.py` | Embeddings OpenAI com dimensão fixa (1536) |
+| `ai/providers/fake.py` | `FakeLLMProvider` (roteirizado) e `FakeEmbeddingProvider` (determinístico) para testes |
+| `ai/providers/__init__.py` | `get_llm_provider()` e `get_embedding_provider()`, a partir da configuração |
 | `tools/registry.py` | `ToolRegistry` e `criar_registry_financeiro()`, a allowlist explícita |
-| `tools/titulo_tools.py` | As tools de consulta |
+| `tools/titulo_tools.py` | As tools de consulta financeira |
+| `tools/documentacao_tools.py` | A tool `search_documentation` |
 
 ### Tools disponíveis (todas somente leitura)
 
-| Tool | Service usado |
+| Tool | O que usa |
 |---|---|
 | `get_titulo(titulo_id)` | `TituloService.obter_detalhe`: status, fornecedor, datas, valor total, rateado, pago, saldo e vencido |
 | `get_rateios_titulo(titulo_id)` | `RateioService.listar` |
 | `get_pagamentos_titulo(titulo_id)` | `PagamentoService.listar` |
 | `get_logs_titulo(titulo_id)` | `TituloService.listar_logs` |
 | `get_titulos_vencidos()` | `TituloService.listar(vencidos=True)` |
+| `search_documentation(query)` | `RAGService.search`: só retrieval (`source`, `section`, `content`, `score`), **não** chama o LLM |
 
 Resultado padronizado, serializável em JSON (valores monetários como string com 2 casas):
 
@@ -239,27 +244,33 @@ Resultado padronizado, serializável em JSON (valores monetários como string co
 
 ### Structured outputs
 
-`provider.generate_structured(mensagens, response_model=MeuSchema)` devolve uma instância validada de `MeuSchema`. Se a resposta não for compatível, lança `LLMStructuredOutputError`. Nunca devolve um objeto parcialmente validado.
+`provider.generate_structured(mensagens, response_model=MeuSchema)` devolve uma instância validada de `MeuSchema`. Se a resposta não for compatível, ou se o modelo recusar, lança `LLMStructuredOutputError`. Nunca devolve um objeto parcialmente validado.
 
 ### Segurança
 
 - O LLM não acessa o banco nem gera SQL: ele só pode pedir tools pelo nome. O nome serve apenas como chave de um dicionário de tools registradas explicitamente, sem `eval`, `exec`, import dinâmico ou `getattr` sobre texto do modelo.
 - Os argumentos são validados por modelos Pydantic com `extra="forbid"` antes de qualquer execução.
+- A `query` de `search_documentation` só vira embedding: nunca é interpolada em SQL.
 - Testes garantem que a allowlist é exatamente a esperada, que nenhuma tool altera dados (sem flush, sem mudança de estado), que argumentos maliciosos são recusados e que erros internos não vazam detalhes.
 
 ### Configuração
 
 | Variável | Descrição |
 |---|---|
-| `LLM_PROVIDER` | `openai` (único suportado nesta fase) |
+| `LLM_PROVIDER` | `openai` (único suportado) |
 | `OPENAI_API_KEY` | Chave da API. Lida como `SecretStr`: não aparece em `repr`, logs ou respostas |
-| `OPENAI_MODEL` | Modelo a usar (obrigatório para chamadas reais) |
+| `OPENAI_MODEL` | Modelo de chat (obrigatório para chamadas reais) |
+| `OPENAI_EMBEDDING_MODEL` | Modelo de embeddings (default `text-embedding-3-small`) |
 
 A API financeira sobe e funciona sem essas variáveis; a ausência só gera erro (`LLMConfigurationError`) quando algo que usa o LLM é chamado. Defina-as no `.env` da raiz, que não é versionado.
 
 ### Observabilidade
 
-Cada chamada ao LLM gera um log estruturado com `provider`, `model`, `duration_ms`, `input_tokens`, `output_tokens`, `finish_reason` e o número de `tool_calls`. Cada execução de tool registra `tool`, `ok`, `error_code` e `duration_ms`. Prompts e respostas não são registrados.
+- Cada chamada ao LLM: `provider`, `model`, `duration_ms`, `input_tokens`, `output_tokens`, `finish_reason` e o número de `tool_calls`. Uma chamada recusada ou sem objeto válido é registrada como falha, não como sucesso.
+- Cada execução de tool: `tool`, `ok`, `error_code` e `duration_ms`.
+- Embeddings: `model`, quantidade de `textos`, `input_tokens` e `duration_ms`.
+- Indexação: quantidade de `documentos`, de `chunks` e `duration_ms`. Busca: quantidade de `resultados` e `duration_ms`.
+- Prompts, perguntas, respostas e conteúdo dos documentos não são registrados.
 
 ### Smoke test manual (opcional)
 
@@ -273,6 +284,86 @@ Prova o fluxo: LLM real → solicita tool → `ToolCall` → `ToolRegistry` → 
 
 ---
 
+## RAG (base de conhecimento)
+
+RAG implementado manualmente, sem frameworks: o objetivo é deixar cada etapa visível.
+
+```
+Indexação (comando explícito)            Pergunta (POST /ai/ask)
+─────────────────────────────            ───────────────────────
+docs/*.md                                pergunta
+  ↓ chunking por seção (heading)           ↓ embedding
+chunks                                   pgvector: ORDER BY embedding <=> :q LIMIT 5
+  ↓ embeddings (OpenAI)                    ↓
+chunks_documentacao (pgvector)           top chunks → contexto numerado
+                                           ↓ LLM (structured output)
+                                         { answer, sources } → fontes validadas
+```
+
+### Base de conhecimento
+
+`backend/docs/` contém documentos fictícios, escritos para o AP Copilot e coerentes com as regras do código: `regras_titulos.md`, `regras_rateios.md`, `regras_pagamentos.md`, `erros_integracao.md` e `manual_financeiro.md`. Os documentos são propositalmente pequenos.
+
+### Tabela
+
+`chunks_documentacao`: `id`, `source` (nome do arquivo), `section` (heading), `content`, `embedding vector(1536)` e `created_at`. Não há tabela de documentos, versionamento nem metadados em JSON. A migration `0003` ativa a extensão `vector`. Não há índice vetorial (HNSW/IVFFlat): com poucas dezenas de linhas, a busca exata por varredura é instantânea e determinística.
+
+### Chunking (`rag/chunking.py`)
+
+- Cada heading Markdown inicia uma seção; `section` é o texto do heading. Headings dentro de blocos de código são ignorados.
+- Seções sem texto próprio (ex.: o título `# Pagamentos` seguido direto de `## Registro`) não geram chunk.
+- Uma seção com mais de 2.000 caracteres é dividida nos parágrafos, mantendo a mesma `section`. Hoje nenhum documento chega a esse limite.
+- O texto vetorizado é `section + content`: o heading resume do que a seção trata.
+
+### Indexação
+
+```bash
+docker compose exec api python -m scripts.index_docs
+```
+
+Gera os embeddings de todos os chunks **antes** de tocar no banco e então, em uma única transação, apaga os chunks antigos e grava os novos. Se o provider falhar, o banco não é tocado; se a gravação falhar, o rollback preserva o índice anterior. Não há indexação incremental, hash de conteúdo nem watcher: com poucos documentos, recriar tudo é mais simples.
+
+### Busca e resposta (`RAGService`)
+
+- `search(query, limit=5)`: gera o embedding da pergunta e ordena por distância de cosseno (`<=>`) **no PostgreSQL**; só os campos de texto e a distância voltam ao Python. `score = 1 − distância`.
+- `answer(question)`: recupera os chunks, monta o contexto e chama `generate_structured(..., RespostaRAG)`. O prompt exige responder **somente** com o contexto, dizer quando não há informação suficiente, não inventar regras e não usar conhecimento externo como se fosse regra do AP Copilot.
+- **Validação de fontes:** cada par `source` + `section` citado pelo modelo precisa estar entre os chunks entregues a ele; caso contrário, a resposta é rejeitada (`LLMStructuredOutputError` → HTTP 502 `IA_RESPOSTA_INVALIDA`).
+- Sem chunks indexados, responde que não há informação suficiente, sem chamar o LLM.
+
+### Endpoint
+
+```http
+POST /ai/ask
+{ "question": "O que acontece quando um pagamento de um título pago é estornado?" }
+```
+
+```json
+{
+  "answer": "O título volta para PENDENTE e precisa ser aprovado novamente...",
+  "sources": [{ "source": "regras_pagamentos.md", "section": "Estorno de título PAGO" }]
+}
+```
+
+| HTTP | Código | Quando |
+|---|---|---|
+| 503 | `IA_NAO_CONFIGURADA` | Falta `OPENAI_API_KEY` ou `OPENAI_MODEL` |
+| 504 | `IA_TIMEOUT` | O provider não respondeu a tempo |
+| 502 | `IA_RESPOSTA_INVALIDA` | Structured output inválido, recusa ou fonte fora do contexto |
+| 502 | `IA_INDISPONIVEL` | Outras falhas do provider |
+
+Não há endpoint de indexação: ela é sempre um comando explícito.
+
+### Smoke test do RAG (opcional)
+
+```bash
+docker compose exec api python -m scripts.smoke_rag
+docker compose exec api python -m scripts.smoke_rag --pergunta "Posso cancelar um título pago?"
+```
+
+Indexa os documentos com embeddings reais, mostra os chunks recuperados com score, gera a resposta e lista as fontes. Consome tokens e não faz parte do `pytest`.
+
+---
+
 ## Roadmap
 
 | Fase | Escopo | Status |
@@ -280,7 +371,7 @@ Prova o fluxo: LLM real → solicita tool → `ToolCall` → `ToolRegistry` → 
 | 1 | Backend financeiro: entidades, regras, CRUD, auditoria, testes, Docker | ✅ |
 | 1.1 | Estorno em título PAGO (reabre como PENDENTE) e renomeação da auditoria (`logs_auditoria`) | ✅ |
 | 2 | Contrato de LLM, provider OpenAI, tool calling, structured outputs e tools de leitura | ✅ |
-| 3 | RAG: documentação → chunking → embeddings → pgvector, com citação de fontes | ⏳ |
+| 3 | RAG: documentação → chunking → embeddings → pgvector, com citação e validação de fontes | ✅ |
 | 4 | Agente Copilot com tools somente leitura | ⏳ |
 | 5 | Frontend (React + TypeScript + Tailwind) | ⏳ |
 | 6 | Observabilidade, avaliações e hardening | ⏳ |
@@ -293,4 +384,6 @@ Prova o fluxo: LLM real → solicita tool → `ToolCall` → `ToolRegistry` → 
 - O lock de concorrência em pagamentos não tem teste automatizado multi-conexão (a suíte usa uma transação por teste).
 - A imagem Docker inclui as dependências de desenvolvimento, pois os testes rodam no mesmo container.
 - Camada de IA: apenas OpenAI. Ainda não há loop de agente (o modelo solicita tools, mas o resultado ainda não volta para ele).
-- O smoke test com a OpenAI real é manual e não roda na suíte.
+- RAG básico de propósito: sem reranking, busca híbrida, reescrita de pergunta ou limiar de score (o LLM decide se os trechos são suficientes).
+- O `FakeEmbeddingProvider` usa bag-of-words: os testes validam o pipeline, não a qualidade semântica da busca.
+- Os smoke tests com a OpenAI real são manuais e não rodam na suíte.
