@@ -11,13 +11,15 @@ from itertools import count
 from sqlalchemy.orm import Session
 
 from app.core import cnpj
-from app.models import CentroCusto, Fornecedor, RateioTitulo, TituloPagar
+from app.models import CentroCusto, Fornecedor, Pagamento, RateioTitulo, TituloPagar
 from app.schemas.centro_custo import CentroCustoCreate, CentroCustoUpdate
 from app.schemas.fornecedor import FornecedorCreate, FornecedorUpdate
+from app.schemas.pagamento import PagamentoCreate
 from app.schemas.rateio import RateioCreate
 from app.schemas.titulo import TituloCreate
 from app.services.centro_custo_service import CentroCustoService
 from app.services.fornecedor_service import FornecedorService
+from app.services.pagamento_service import PagamentoService
 from app.services.rateio_service import RateioService
 from app.services.titulo_service import TituloService
 
@@ -87,3 +89,10 @@ def criar_titulo_aprovado(db: Session, *, valor: str = "1000.00", **kwargs) -> T
     titulo = criar_titulo(db, valor=valor, **kwargs)
     ratear(db, titulo, valor)
     return TituloService(db).aprovar(titulo.id)
+
+
+def pagar(db: Session, titulo: TituloPagar, valor: str, data: date | None = None) -> Pagamento:
+    return PagamentoService(db).registrar(
+        titulo.id,
+        PagamentoCreate(data_pagamento=data or titulo.data_emissao, valor=Decimal(valor)),
+    )

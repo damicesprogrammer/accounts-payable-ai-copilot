@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessRuleError, ConflictError, NotFoundError
 from app.models import StatusLog, StatusTitulo, TipoLog, TituloPagar
+from app.repositories.pagamento_repository import PagamentoRepository
 from app.repositories.rateio_repository import RateioRepository
 from app.repositories.titulo_repository import TituloRepository
 from app.schemas.titulo import TituloCreate, TituloUpdate
@@ -154,6 +155,15 @@ class TituloService:
 
     def cancelar(self, titulo_id: int, motivo: str) -> TituloPagar:
         titulo = self.obter_para_alteracao(titulo_id)
+        valor_pago = PagamentoRepository(self.db).soma_confirmados(titulo.id)
+        if valor_pago > 0:
+            raise BusinessRuleError(
+                f"Título {titulo.id} possui {valor_pago} em pagamentos confirmados. "
+                "Estorne os pagamentos antes de cancelar.",
+                code="TITULO_COM_PAGAMENTOS",
+                titulo_id=titulo.id,
+                valor_pago=str(valor_pago),
+            )
         self.mudar_status(titulo, StatusTitulo.CANCELADO, motivo)
         self.db.commit()
         return titulo
@@ -186,12 +196,31 @@ class TituloService:
         operações maiores (ex.: quitação automática ao registrar pagamento)."""
         anterior = titulo.status
         status_titulo.validar_transicao(titulo.id, anterior, novo)
+        if novo == StatusTitulo.PAGO:
+            self._garantir_quitado(titulo)
         titulo.status = novo
         self.audit.registrar(
             TipoLog.MUDANCA_STATUS,
             f"Status alterado de {anterior} para {novo}. Motivo: {motivo}",
             titulo_id=titulo.id,
         )
+
+    def _garantir_quitado(self, titulo: TituloPagar) -> None:
+        """Regra 2: só é PAGO quando os pagamentos confirmados somam exatamente o valor.
+
+        Fica no único ponto por onde qualquer mudança de status passa, então
+        nenhum fluxo — atual ou futuro — consegue marcar PAGO sem quitação.
+        """
+        valor_pago = PagamentoRepository(self.db).soma_confirmados(titulo.id)
+        if valor_pago != titulo.valor_total:
+            raise BusinessRuleError(
+                f"Título {titulo.id} não pode ser marcado como PAGO: pagamentos confirmados "
+                f"somam {valor_pago} de {titulo.valor_total}.",
+                code="PAGAMENTOS_NAO_QUITAM_TITULO",
+                titulo_id=titulo.id,
+                valor_total=str(titulo.valor_total),
+                valor_pago=str(valor_pago),
+            )
 
     def _garantir_numero_unico(self, fornecedor_id: int, numero: str) -> None:
         if self.repo.get_by_numero(fornecedor_id, numero):

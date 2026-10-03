@@ -2,8 +2,10 @@ from fastapi import APIRouter, status
 
 from app.api.deps import ERROS_404, ERROS_409, ERROS_422, DbSession, PaginacaoParams
 from app.models import StatusTitulo
+from app.schemas.pagamento import PagamentoCreate, PagamentoRead
 from app.schemas.rateio import RateioCreate, RateioRead
 from app.schemas.titulo import CancelamentoInput, TituloCreate, TituloRead, TituloUpdate
+from app.services.pagamento_service import PagamentoService
 from app.services.rateio_service import RateioService
 from app.services.titulo_service import TituloService
 
@@ -96,3 +98,32 @@ def adicionar_rateio(titulo_id: int, dados: RateioCreate, db: DbSession):
 )
 def remover_rateio(titulo_id: int, rateio_id: int, db: DbSession) -> None:
     RateioService(db).remover(titulo_id, rateio_id)
+
+
+# ---------------------------------------------------------------- pagamentos
+
+
+@router.get("/{titulo_id}/pagamentos", response_model=list[PagamentoRead], responses=ERROS_404)
+def listar_pagamentos(titulo_id: int, db: DbSession):
+    return PagamentoService(db).listar(titulo_id)
+
+
+@router.post(
+    "/{titulo_id}/pagamentos",
+    response_model=PagamentoRead,
+    status_code=status.HTTP_201_CREATED,
+    responses={**ERROS_404, **ERROS_422},
+)
+def registrar_pagamento(titulo_id: int, dados: PagamentoCreate, db: DbSession):
+    """Quando a soma dos pagamentos confirmados atinge o valor total, o título
+    passa automaticamente para PAGO."""
+    return PagamentoService(db).registrar(titulo_id, dados)
+
+
+@router.post(
+    "/{titulo_id}/pagamentos/{pagamento_id}/estornar",
+    response_model=PagamentoRead,
+    responses={**ERROS_404, **ERROS_422},
+)
+def estornar_pagamento(titulo_id: int, pagamento_id: int, db: DbSession):
+    return PagamentoService(db).estornar(titulo_id, pagamento_id)
