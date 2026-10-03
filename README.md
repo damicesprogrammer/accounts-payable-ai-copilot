@@ -6,6 +6,8 @@ O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio rea
 
 > **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling), 3 (RAG com pgvector), 4 (agent loop), 5 (frontend) e 6 (evals e hardening) concluídas. Veja o [roadmap](#roadmap).
 
+![AP Copilot demo](docs/assets/ap-copilot-demo.gif)
+
 ---
 
 ## Stack
