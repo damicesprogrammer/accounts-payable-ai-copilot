@@ -94,14 +94,14 @@ export default function TitulosPage() {
                   className="cursor-pointer hover:bg-slate-50"
                   onClick={() => navigate(`/titulos/${t.id}`)}
                 >
-                  <td className="px-4 py-3 font-medium">
+                  <td className="whitespace-nowrap px-4 py-3 font-medium">
                     <Link to={`/titulos/${t.id}`} className="text-slate-900 hover:underline">
                       {t.numero}
                     </Link>
                   </td>
                   <td className="px-4 py-3 text-slate-700">{t.fornecedor.nome}</td>
-                  <td className="px-4 py-3 text-slate-700">{formatDate(t.data_vencimento)}</td>
-                  <td className="px-4 py-3 text-right font-medium tabular-nums">{formatCurrency(t.valor_total)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-slate-700">{formatDate(t.data_vencimento)}</td>
+                  <td className="whitespace-nowrap px-4 py-3 text-right font-medium tabular-nums">{formatCurrency(t.valor_total)}</td>
                   <td className="px-4 py-3">
                     <StatusBadge status={t.status} />
                   </td>
