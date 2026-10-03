@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { NavLink } from 'react-router'
+import { NavLink, useLocation } from 'react-router'
 
 const linkClass = ({ isActive }: { isActive: boolean }) =>
   `rounded-md px-3 py-2 text-sm font-medium ${
@@ -7,6 +7,7 @@ const linkClass = ({ isActive }: { isActive: boolean }) =>
   }`
 
 export default function Layout({ children }: { children: ReactNode }) {
+  const { pathname } = useLocation()
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900">
       <header className="border-b border-slate-200 bg-white">
@@ -16,8 +17,8 @@ export default function Layout({ children }: { children: ReactNode }) {
             <p className="text-xs text-slate-500">AI-powered Accounts Payable</p>
           </div>
           <nav className="flex gap-1">
-            {/* `end`: "/" não deve ficar ativo nas outras rotas */}
-            <NavLink to="/" end className={linkClass}>
+            {/* "/" e o detalhe do título (/titulos/:id) pertencem à área Accounts Payable */}
+            <NavLink to="/" className={() => linkClass({ isActive: pathname === '/' || pathname.startsWith('/titulos/') })}>
               Accounts Payable
             </NavLink>
             <NavLink to="/copilot" className={linkClass}>
