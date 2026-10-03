@@ -327,11 +327,15 @@ def test_log_soma_os_tokens_de_todas_as_chamadas_da_pergunta(db, caplog):
     assert (registro.input_tokens, registro.output_tokens) == (2000, 80)
 
 
-def test_prompt_em_ingles_preserva_as_regras_e_os_valores_do_sistema():
+def test_prompt_em_ingles_traduz_status_so_no_texto_e_preserva_o_sistema():
     pt, en = prompt_sistema("pt-BR"), prompt_sistema("en-US")
+    regra_en = en.split("14.")[1]
 
     assert pt.endswith("14. Responda em português, de forma objetiva.")
     assert "Responda em inglês (en-US)" in en and "Responda em português" not in en
-    assert "PENDENTE" in en.split("14.")[1]  # status ficam como no sistema
-    assert "R$" in en.split("14.")[1]  # moeda continua sendo real, não dólar
+    # Status: rótulo em inglês para o usuário, código do sistema nos argumentos das tools.
+    assert "PENDENTE → pending" in regra_en and "APROVADO → approved" in regra_en
+    assert "nos argumentos das tools use sempre os valores do sistema" in regra_en
+    assert "códigos de erro, nomes de tools e números de títulos" in regra_en
+    assert "R$" in regra_en  # moeda continua sendo real, não dólar
     assert pt.split("14.")[0] == en.split("14.")[0]  # regras 1–13 idênticas

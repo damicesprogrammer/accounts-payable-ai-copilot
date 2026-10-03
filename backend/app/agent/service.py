@@ -53,15 +53,18 @@ consolidados. Utilize os valores calculados pelo sistema.
 13. PENDENTE é um status do workflow; VENCIDO é uma condição baseada na data de vencimento. \
 Não trate esses conceitos como sinônimos."""
 
-# Última regra: o idioma da resposta escolhido na interface. Valores do sistema
-# (status, códigos, números de títulos) ficam como estão para bater com a tela.
+# Última regra: o idioma da resposta escolhido na interface. O status é traduzido só no
+# texto para o usuário (como na tela); argumentos de tools, códigos de erro, números de
+# títulos e a moeda ficam como no sistema.
 REGRA_IDIOMA: dict[Idioma, str] = {
     "pt-BR": "14. Responda em português, de forma objetiva.",
     "en-US": (
         "14. Responda em inglês (en-US), de forma objetiva, mesmo que a pergunta, as tools ou a "
-        "documentação estejam em português. Mantenha como no sistema os valores de status "
-        "(ex.: PENDENTE), códigos de erro e números de títulos. Valores monetários são em "
-        "reais (BRL): escreva-os com R$, nunca com $ ou USD."
+        "documentação estejam em português. Ao falar com o usuário, escreva os status em inglês "
+        "natural (PENDENTE → pending, APROVADO → approved, PAGO → paid, CANCELADO → canceled, "
+        "ERRO → error); nos argumentos das tools use sempre os valores do sistema (ex.: "
+        "PENDENTE). Mantenha códigos de erro, nomes de tools e números de títulos como no "
+        "sistema. Valores monetários são em reais (BRL): escreva-os com R$, nunca com $ ou USD."
     ),
 }
 

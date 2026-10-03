@@ -153,6 +153,47 @@ const ptBR: Record<MessageKey, string> = {
 export const LANGUAGES = ['en-US', 'pt-BR'] as const
 export type Language = (typeof LANGUAGES)[number]
 
+// Rótulos dos códigos de domínio (status de título, pagamento e log; tipo de log).
+// Só apresentação: a API, os filtros e as tools continuam usando o código (ex.: PENDENTE).
+const CODE_LABELS: Record<Language, Record<string, string>> = {
+  'en-US': {
+    PENDENTE: 'Pending',
+    APROVADO: 'Approved',
+    PAGO: 'Paid',
+    CANCELADO: 'Canceled',
+    ERRO: 'Error',
+    CONFIRMADO: 'Confirmed',
+    ESTORNADO: 'Reversed',
+    SUCESSO: 'Success',
+    INFO: 'Info',
+    CRIACAO: 'Created',
+    ATUALIZACAO: 'Updated',
+    MUDANCA_STATUS: 'Status change',
+    RATEIO: 'Allocation',
+    PAGAMENTO: 'Payment',
+    INTEGRACAO: 'Integration',
+    CADASTRO: 'Registration',
+  },
+  'pt-BR': {
+    PENDENTE: 'Pendente',
+    APROVADO: 'Aprovado',
+    PAGO: 'Pago',
+    CANCELADO: 'Cancelado',
+    ERRO: 'Erro',
+    CONFIRMADO: 'Confirmado',
+    ESTORNADO: 'Estornado',
+    SUCESSO: 'Sucesso',
+    INFO: 'Info',
+    CRIACAO: 'Criação',
+    ATUALIZACAO: 'Atualização',
+    MUDANCA_STATUS: 'Mudança de status',
+    RATEIO: 'Rateio',
+    PAGAMENTO: 'Pagamento',
+    INTEGRACAO: 'Integração',
+    CADASTRO: 'Cadastro',
+  },
+}
+
 const MESSAGES: Record<Language, Record<MessageKey, string>> = { 'en-US': enUS, 'pt-BR': ptBR }
 const STORAGE_KEY = 'ap-copilot.language'
 const DEFAULT_LANGUAGE: Language = 'en-US'
@@ -205,9 +246,15 @@ export function translate(
   )
 }
 
-/** Idioma atual + `t()`; o componente re-renderiza quando o idioma muda. */
+/** "PENDENTE" → "Pending" / "Pendente". Código desconhecido aparece como veio da API. */
+export function codeLabel(code: string, language: Language = current): string {
+  return CODE_LABELS[language][code] ?? code
+}
+
+/** Idioma atual + `t()` e `label()`; o componente re-renderiza quando o idioma muda. */
 export function useI18n() {
   const language = useSyncExternalStore(subscribe, getLanguage)
   const t = (key: MessageKey, params?: Record<string, string | number>) => translate(key, params, language)
-  return { language, setLanguage, t }
+  const label = (code: string) => codeLabel(code, language)
+  return { language, setLanguage, t, label }
 }

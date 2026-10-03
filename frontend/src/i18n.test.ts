@@ -13,6 +13,17 @@ describe('i18n', () => {
     expect(translate('titulos.records', { count: 3 }, 'pt-BR')).toBe('3 registros')
   })
 
+  it('traduz códigos do domínio só para exibição', async () => {
+    const { codeLabel } = await import('./i18n')
+
+    expect(codeLabel('PENDENTE', 'en-US')).toBe('Pending')
+    expect(codeLabel('APROVADO', 'en-US')).toBe('Approved')
+    expect(codeLabel('PENDENTE', 'pt-BR')).toBe('Pendente')
+    expect(codeLabel('ESTORNADO', 'en-US')).toBe('Reversed')
+    expect(codeLabel('MUDANCA_STATUS', 'pt-BR')).toBe('Mudança de status')
+    expect(codeLabel('DESCONHECIDO', 'en-US')).toBe('DESCONHECIDO')
+  })
+
   it('começa no idioma salvo e ignora valores desconhecidos', async () => {
     localStorage.setItem('ap-copilot.language', 'pt-BR')
     expect((await import('./i18n')).getLanguage()).toBe('pt-BR')

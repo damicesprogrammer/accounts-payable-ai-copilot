@@ -250,7 +250,7 @@ function Pagamentos({ titulo, pagamentos }: { titulo: TituloDetalhe; pagamentos:
 }
 
 function Auditoria({ logs }: { logs: LogAuditoria[] }) {
-  const { t } = useI18n()
+  const { t, label } = useI18n()
   if (logs.length === 0) return <EmptyState text={t('titulo.noAuditEvents')} />
   return (
     <ol className="divide-y divide-slate-100">
@@ -258,7 +258,7 @@ function Auditoria({ logs }: { logs: LogAuditoria[] }) {
         <li key={log.id} className="flex flex-col gap-1 px-4 py-3 sm:flex-row sm:items-start sm:gap-4">
           <time className="w-36 shrink-0 text-xs text-slate-500 tabular-nums">{formatDateTime(log.created_at)}</time>
           <div className="flex shrink-0 items-center gap-2 sm:w-56">
-            <span className="text-xs font-medium text-slate-700">{log.tipo.replaceAll('_', ' ')}</span>
+            <span className="text-xs font-medium text-slate-700">{label(log.tipo)}</span>
             <StatusBadge status={log.status} />
           </div>
           <p className="text-sm text-slate-800">{log.mensagem}</p>

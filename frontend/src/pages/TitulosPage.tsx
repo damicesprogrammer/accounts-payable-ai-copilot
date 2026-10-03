@@ -16,7 +16,7 @@ const selectClass =
 
 export default function TitulosPage() {
   const navigate = useNavigate()
-  const { t } = useI18n()
+  const { t, label } = useI18n()
   const [filtros, setFiltros] = useState<FiltrosTitulos>({ status: '', fornecedorId: '', vencidos: false })
   // A filtragem é sempre feita pelo backend.
   const titulos = useApi(JSON.stringify(filtros), () => listarTitulos(filtros))
@@ -39,7 +39,7 @@ export default function TitulosPage() {
           <option value="">{t('titulos.allStatuses')}</option>
           {STATUS.map((s) => (
             <option key={s} value={s}>
-              {s}
+              {label(s)}
             </option>
           ))}
         </select>
