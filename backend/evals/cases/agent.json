@@ -22,5 +22,33 @@
     "question": "Posso aprovar um título que está apenas 50% rateado?",
     "required_tools": ["search_documentation"],
     "expected_contains": ["100%", ["RATEIO_INCOMPLETO", "não pode", "não é possível", "não será", "bloquead", "impede"]]
+  },
+  {
+    "id": "agent_titulos_pendentes",
+    "question": "Quantos títulos pendentes temos?",
+    "required_tools": ["get_titulos_por_status"],
+    "forbidden_tools": ["get_titulos_vencidos", "search_documentation"],
+    "expected_contains": ["{PENDENTE.quantidade}"]
+  },
+  {
+    "id": "agent_titulos_aprovados",
+    "question": "Quantos títulos aprovados temos?",
+    "required_tools": ["get_titulos_por_status"],
+    "forbidden_tools": ["get_titulos_vencidos", "search_documentation"],
+    "expected_contains": ["{APROVADO.quantidade}"]
+  },
+  {
+    "id": "agent_fornecedores_total",
+    "question": "Quantos fornecedores eu tenho?",
+    "required_tools": ["get_fornecedores"],
+    "forbidden_tools": ["search_documentation"],
+    "expected_contains": ["{fornecedores.quantidade}"]
+  },
+  {
+    "id": "agent_fornecedores_ativos",
+    "question": "Quantos fornecedores ativos eu tenho?",
+    "required_tools": ["get_fornecedores"],
+    "forbidden_tools": ["search_documentation"],
+    "expected_contains": ["{fornecedores_ativos.quantidade}"]
   }
 ]

@@ -18,6 +18,9 @@ antes do eval, para que nenhum número dependa do LLM nem de hardcode:
     {NF-9004}                  → id do título NF-9004
     {NF-9008.saldo_pendente}   → campo de TituloService.obter_detalhe
     {vencidos.quantidade}      → campo de TituloService.resumo_vencidos
+    {PENDENTE.quantidade}      → campo de TituloService.resumo_por_status (qualquer status)
+    {fornecedores_ativos.quantidade} → campo de FornecedorService.resumo
+                                 (fornecedores | fornecedores_ativos | fornecedores_inativos)
 
 Saída: 0 = todos os casos passaram, 1 = algum falhou, 2 = erro de configuração.
 """
@@ -40,8 +43,9 @@ from app.ai.contracts import EmbeddingProvider, LLMProvider, ToolCall
 from app.ai.exceptions import LLMConfigurationError, LLMError
 from app.ai.providers import get_embedding_provider, get_llm_provider
 from app.core.db import SessionLocal
-from app.models import ChunkDocumentacao
+from app.models import ChunkDocumentacao, StatusTitulo
 from app.rag.service import RAGService
+from app.services.fornecedor_service import FornecedorService
 from app.services.titulo_service import TituloService
 from app.tools.contracts import ToolResult
 from app.tools.registry import ToolRegistry, criar_registry_financeiro
@@ -64,6 +68,8 @@ CAMPOS = {
 }
 TOP_K_RAG = 3  # a seção esperada precisa estar entre os primeiros resultados
 PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
+# Placeholder → filtro `ativo` de FornecedorService.resumo.
+FORNECEDORES = {"fornecedores": None, "fornecedores_ativos": True, "fornecedores_inativos": False}
 
 
 class EvalConfigError(Exception):
@@ -132,6 +138,10 @@ def _valor(chave: str, db: Session) -> Any:
     service = TituloService(db)
     if alvo == "vencidos":
         return getattr(service.resumo_vencidos(), campo)
+    if alvo in StatusTitulo:
+        return getattr(service.resumo_por_status(StatusTitulo(alvo)), campo)
+    if alvo in FORNECEDORES:
+        return getattr(FornecedorService(db).resumo(ativo=FORNECEDORES[alvo]), campo)
     titulo = next((t for t in service.listar(limit=None) if t.numero == alvo), None)
     if titulo is None:
         raise EvalConfigError(f"Título {alvo} não encontrado. Rode antes: python -m scripts.seed")

@@ -18,7 +18,7 @@ from app.ai.providers.fake import FakeEmbeddingProvider, FakeLLMProvider
 from app.rag.chunking import Chunk
 from app.rag.service import RAGService
 from evals import report, runner
-from tests.factories import criar_titulo, criar_titulo_aprovado, pagar
+from tests.factories import criar_fornecedor, criar_titulo, criar_titulo_aprovado, pagar
 
 # ---------------------------------------------------------------------- casos
 
@@ -71,6 +71,29 @@ def test_placeholders_sao_resolvidos_pelos_services(db):
 
     assert resolvido["question"] == f"Quanto falta pagar do título {titulo.id}?"
     assert resolvido["expected_contains"] == [["1.300,00", "1300.00"], ["1"], ["texto"]]
+
+
+def test_placeholders_de_status_e_fornecedores_vem_dos_services(db):
+    criar_titulo(db)
+    criar_titulo(db)
+    criar_titulo_aprovado(db)
+    criar_fornecedor(db, ativo=False)  # + 3 ativos, um por título criado acima
+    caso = {
+        "id": "x",
+        "question": "q",
+        "expected_contains": [
+            "{PENDENTE.quantidade}",
+            "{APROVADO.quantidade}",
+            "{ERRO.quantidade}",
+            "{fornecedores.quantidade}",
+            "{fornecedores_ativos.quantidade}",
+            "{fornecedores_inativos.quantidade}",
+        ],
+    }
+
+    resolvido = runner.resolver_caso(caso, db)
+
+    assert resolvido["expected_contains"] == [["2"], ["1"], ["0"], ["4"], ["3"], ["1"]]
 
 
 def test_placeholder_de_titulo_inexistente_pede_o_seed(db):
