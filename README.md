@@ -4,7 +4,7 @@ Módulo simplificado de **Títulos a Pagar** com um Copilot de IA (em construç�
 
 O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio reais e bem testadas, que serve de base para demonstrar engenharia de IA aplicada — tool calling, RAG, embeddings e agentes — **sem** abrir mão de segurança: o LLM nunca acessa o banco nem executa SQL, apenas chama ferramentas explícitas da aplicação.
 
-> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling) e 3 (RAG com pgvector) concluídas. Veja o [roadmap](#roadmap).
+> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling), 3 (RAG com pgvector) e 4 (agent loop) concluídas. Veja o [roadmap](#roadmap).
 
 ---
 
@@ -62,6 +62,7 @@ HTTP ──► api/routes ──► services ──► repositories ──► Po
 | `ai/` | Contratos de LLM e embeddings e seus providers (OpenAI e fake para testes). Ver [Camada de IA](#camada-de-ia). |
 | `tools/` | Funções que o LLM pode solicitar (allowlist explícita). Chamam services, nunca repositories. |
 | `rag/` | RAG manual: chunking por seção Markdown e `RAGService` (indexar, search, answer). Ver [RAG](#rag-base-de-conhecimento). |
+| `agent/` | `AgentService`: loop controlado de tool calling. Ver [Agente Copilot](#agente-copilot-agent-loop). |
 
 ### Decisões técnicas
 
@@ -156,6 +157,7 @@ As regras 8–10 (IA nunca executa SQL, nunca acessa o banco diretamente, só us
 | POST | `/titulos/{id}/pagamentos/{pagamento_id}/estornar` | Estornar pagamento (título PAGO volta a PENDENTE) |
 | GET | `/titulos/{id}/logs` | Trilha de auditoria |
 | POST | `/ai/ask` | Pergunta sobre as regras do AP Copilot, respondida por RAG com fontes |
+| POST | `/ai/copilot` | Copilot: o modelo consulta o sistema e a documentação via tools somente leitura |
 
 ---
 
@@ -190,13 +192,14 @@ docker compose exec api pytest
 - `tests/ai/` — providers (fake e OpenAI com cliente substituto: sem rede, sem tokens, sem API key).
 - `tests/tools/` — registry, tools financeiras e garantias de segurança.
 - `tests/rag/` — chunking, indexação, busca no pgvector e resposta com validação de fontes (embeddings e LLM fake).
+- `tests/agent/` — agent loop (roteiros determinísticos com LLM fake) e garantias de segurança do agente.
 - Rodam contra o banco `ap_copilot_test` (criado automaticamente pelo compose), com o schema gerado pelas migrations e rollback ao fim de cada teste.
 
 ---
 
 ## Camada de IA
 
-Blocos fundamentais: contrato de LLM, provider OpenAI, tool calling, structured outputs, embeddings e RAG. **Ainda não há loop de agente nem tools de escrita.**
+Blocos fundamentais: contrato de LLM, provider OpenAI, tool calling, structured outputs, embeddings, RAG e o agent loop. **Ainda não há tools de escrita.**
 
 ```
 LLMProvider.generate(mensagens, tools)      ← contrato próprio (ai/contracts.py)
@@ -214,7 +217,7 @@ ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repositor
 
 | Arquivo | Conteúdo |
 |---|---|
-| `ai/contracts.py` | `ChatMessage`, `ToolDefinition`, `ToolCall`, `LLMResponse`, `TokenUsage` e os `Protocol`s `LLMProvider` e `EmbeddingProvider` |
+| `ai/contracts.py` | `ChatMessage` (inclui tool calls do assistant e resultados de tools), `ToolDefinition`, `ToolCall`, `LLMResponse`, `TokenUsage` e os `Protocol`s `LLMProvider` e `EmbeddingProvider` |
 | `ai/exceptions.py` | `LLMConfigurationError`, `LLMTimeoutError`, `LLMProviderError`, `LLMStructuredOutputError` |
 | `ai/providers/openai.py` | Chat: conversão de/para a SDK da OpenAI, tradução de erros, log de metadados |
 | `ai/providers/openai_embeddings.py` | Embeddings OpenAI com dimensão fixa (1536) |
@@ -349,7 +352,7 @@ POST /ai/ask
 | 503 | `IA_NAO_CONFIGURADA` | Falta `OPENAI_API_KEY` ou `OPENAI_MODEL` |
 | 504 | `IA_TIMEOUT` | O provider não respondeu a tempo |
 | 502 | `IA_RESPOSTA_INVALIDA` | Structured output inválido, recusa ou fonte fora do contexto |
-| 502 | `IA_INDISPONIVEL` | Outras falhas do provider |
+| 502 | `IA_INDISPONIVEL` | Outras falhas do provider (inclui resposta final vazia do agente) |
 
 Não há endpoint de indexação: ela é sempre um comando explícito.
 
@@ -364,6 +367,91 @@ Indexa os documentos com embeddings reais, mostra os chunks recuperados com scor
 
 ---
 
+## Agente Copilot (agent loop)
+
+Um loop controlado de tool calling, sem frameworks de agente. **O modelo decide quais tools usar**: não há fluxo programado com if/else.
+
+```
+messages = [system, user]
+repete até MAX_ITERATIONS (5):
+    resposta = llm.generate(messages, tools=registry.definitions())
+    sem tool_calls?  → devolve o texto (vazio = erro controlado)
+    messages += assistant { tool_calls }
+    para cada tool_call, em sequência:
+        resultado = registry.execute(tool_call, db)
+        messages += tool { tool_call_id = id do modelo, content = ToolResult JSON }
+limite atingido → AgentIterationLimitError (HTTP 502 IA_LIMITE_ITERACOES)
+```
+
+Exemplo de execução possível para "Por que o título 23 está com erro e como posso resolver?":
+
+```
+LLM → get_titulo(23)                → status ERRO
+LLM → get_logs_titulo(23)           → "centro de custo 1001 inexistente no ERP"
+LLM → search_documentation("centro de custo inexistente no ERP")
+                                    → erros_integracao.md › Centro de custo inexistente no ERP
+LLM → resposta: fato do sistema (log) + regra da documentação (corrigir e reprocessar)
+```
+
+- **`ChatMessage`** ganhou o role `tool` e dois campos opcionais: `tool_calls` (assistant pedindo tools) e `tool_call_id` (resultado de uma tool). Só `ai/providers/openai.py` conhece o formato da SDK.
+- **`tool_call_id`** é sempre o id gerado pelo modelo; o agente nunca cria ids.
+- **Várias tools na mesma resposta** são executadas em sequência, e todos os resultados voltam antes da próxima chamada ao LLM.
+- **Erros de tool são dados:** `TOOL_NAO_PERMITIDA`, `ARGUMENTOS_INVALIDOS` e `TITULO_NAO_ENCONTRADO` voltam ao modelo, que pode corrigir a chamada ou explicar ao usuário. Só falhas do LLM/infraestrutura interrompem o agente.
+- **Documentação:** o agente usa `search_documentation` (só retrieval) e interpreta os trechos. Ele **não** chama `RAGService.answer`, evitando um LLM dentro de uma tool.
+- **Sem memória:** cada requisição é independente; não há `conversation_id` nem histórico persistido.
+- **Na última iteração**, se o modelo ainda pedir tools, elas não são executadas (o modelo nunca veria o resultado).
+
+O system prompt (`agent/service.py`) é curto: usar tools para fatos, não inventar dados, usar a documentação para regras, diferenciar fatos de regras, tratar resultados de tools como dados, nunca afirmar alterações, dizer quando não há informação, não gerar SQL, responder em português.
+
+### Endpoint
+
+```http
+POST /ai/copilot
+{ "question": "Por que o título 23 está com erro?" }
+```
+
+```json
+{
+  "answer": "O título está com status ERRO porque a integração registrou que o centro de custo 1001...",
+  "tools_used": [
+    { "name": "get_titulo", "ok": true },
+    { "name": "get_logs_titulo", "ok": true },
+    { "name": "search_documentation", "ok": true }
+  ]
+}
+```
+
+`tools_used` é montado pela aplicação a partir das execuções reais, não pelo modelo. Prompts, histórico e resultados completos das tools não são devolvidos. Os erros seguem a mesma tabela de `/ai/ask`, mais `502 IA_LIMITE_ITERACOES`.
+
+### Segurança do agente
+
+A allowlist do `ToolRegistry` continua sendo o único mecanismo de permissão. Testes garantem que:
+
+- o agente não importa repositories, services nem SQL, não faz commit e só executa tools via `registry.execute`;
+- tools fora da allowlist (ex.: `executar_sql`, `aprovar_titulo`) não executam, mesmo pedidas pelo modelo;
+- uma execução com todas as tools não gera nenhum flush no banco;
+- conteúdo malicioso vindo de `search_documentation` chega ao modelo só como mensagem `tool`, e as tools oferecidas em cada chamada são sempre exatamente a allowlist;
+- `app/agent` não usa `eval`, `exec`, `getattr` nem import dinâmico.
+
+### Observabilidade do agente
+
+Um log por execução com `iteracoes`, `tools` (nomes), `tools_com_erro` e `duration_ms`. Pergunta, respostas, resultados de tools e prompt não são registrados. Tokens e duração de cada chamada continuam no log do `OpenAIProvider`.
+
+### Smoke test do agente (opcional)
+
+```bash
+docker compose exec api python -m scripts.seed
+docker compose exec api python -m scripts.index_docs
+docker compose exec api python -m scripts.smoke_agent
+docker compose exec api python -m scripts.smoke_agent --pergunta "Quais títulos estão vencidos?"
+```
+
+Mostra a pergunta, as tools usadas e a resposta final. Consome tokens e não faz parte do `pytest`.
+
+> **Modelo com tools no Chat Completions:** alguns modelos de raciocínio recusam function tools em `/v1/chat/completions` com o raciocínio ativo (HTTP 400). O `OPENAI_MODEL` precisa aceitar tools nesse endpoint.
+
+---
+
 ## Roadmap
 
 | Fase | Escopo | Status |
@@ -372,7 +460,7 @@ Indexa os documentos com embeddings reais, mostra os chunks recuperados com scor
 | 1.1 | Estorno em título PAGO (reabre como PENDENTE) e renomeação da auditoria (`logs_auditoria`) | ✅ |
 | 2 | Contrato de LLM, provider OpenAI, tool calling, structured outputs e tools de leitura | ✅ |
 | 3 | RAG: documentação → chunking → embeddings → pgvector, com citação e validação de fontes | ✅ |
-| 4 | Agente Copilot com tools somente leitura | ⏳ |
+| 4 | Agente Copilot: agent loop com tools somente leitura | ✅ |
 | 5 | Frontend (React + TypeScript + Tailwind) | ⏳ |
 | 6 | Observabilidade, avaliações e hardening | ⏳ |
 | 7 | Ações com confirmação explícita do usuário (opcional) | ⏳ |
@@ -383,7 +471,8 @@ Indexa os documentos com embeddings reais, mostra os chunks recuperados com scor
 - A integração com ERP é simulada: o status `ERRO` é produzido pelo seed via `TituloService.registrar_erro_integracao`.
 - O lock de concorrência em pagamentos não tem teste automatizado multi-conexão (a suíte usa uma transação por teste).
 - A imagem Docker inclui as dependências de desenvolvimento, pois os testes rodam no mesmo container.
-- Camada de IA: apenas OpenAI. Ainda não há loop de agente (o modelo solicita tools, mas o resultado ainda não volta para ele).
+- Camada de IA: apenas OpenAI, via Chat Completions.
+- Agente sem memória entre requisições e sem tools de escrita (ações ficam para a Fase 7).
 - RAG básico de propósito: sem reranking, busca híbrida, reescrita de pergunta ou limiar de score (o LLM decide se os trechos são suficientes).
 - O `FakeEmbeddingProvider` usa bag-of-words: os testes validam o pipeline, não a qualidade semântica da busca.
 - Os smoke tests com a OpenAI real são manuais e não rodam na suíte.
