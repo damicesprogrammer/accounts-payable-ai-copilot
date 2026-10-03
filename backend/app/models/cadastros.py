@@ -12,7 +12,7 @@ class Fornecedor(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     nome: Mapped[str] = mapped_column(String(200))
     cnpj: Mapped[str] = mapped_column(String(14), unique=True)
-    ativo: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
@@ -22,4 +22,4 @@ class CentroCusto(Base):
     id: Mapped[int] = mapped_column(primary_key=True)
     codigo: Mapped[str] = mapped_column(String(20), unique=True)
     descricao: Mapped[str] = mapped_column(String(200))
-    ativo: Mapped[bool] = mapped_column(Boolean, server_default=true())
+    ativo: Mapped[bool] = mapped_column(Boolean, default=True, server_default=true())

@@ -18,6 +18,9 @@ NAMING_CONVENTION = {
 
 class Base(DeclarativeBase):
     metadata = MetaData(naming_convention=NAMING_CONVENTION)
+    # Busca valores gerados pelo banco (created_at, updated_at...) via RETURNING
+    # no próprio INSERT/UPDATE, para que os objetos fiquem completos após o commit.
+    __mapper_args__ = {"eager_defaults": True}
 
 
 engine = create_engine(get_settings().database_url, pool_pre_ping=True)
