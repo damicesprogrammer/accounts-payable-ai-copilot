@@ -13,6 +13,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.contracts import ToolCall, ToolDefinition
 from app.core.exceptions import DomainError
+from app.tools import titulo_tools
 from app.tools.contracts import Tool, ToolResult
 
 logger = logging.getLogger(__name__)
@@ -77,3 +78,14 @@ def _resumo_validacao(exc: ValidationError) -> str:
         for erro in exc.errors()
     ]
     return "Argumentos inválidos — " + "; ".join(erros)
+
+
+def criar_registry_financeiro() -> ToolRegistry:
+    """Allowlist explícita das tools disponíveis ao LLM. Todas somente leitura."""
+    registry = ToolRegistry()
+    registry.register(titulo_tools.get_titulo)
+    registry.register(titulo_tools.get_rateios_titulo)
+    registry.register(titulo_tools.get_pagamentos_titulo)
+    registry.register(titulo_tools.get_logs_titulo)
+    registry.register(titulo_tools.get_titulos_vencidos)
+    return registry
