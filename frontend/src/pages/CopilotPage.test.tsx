@@ -42,6 +42,20 @@ describe('CopilotPage', () => {
     expect(JSON.parse(init.body)).toEqual({ question: 'Por que o título 4 está com erro?' })
   })
 
+  it('renderiza Markdown da resposta sem interpretar HTML bruto', async () => {
+    vi.stubGlobal(
+      'fetch',
+      respostaFetch(200, { answer: 'Status **ERRO**. <img src="x" onerror="alert(1)">', tools_used: [] }),
+    )
+    const { container } = render(<CopilotPage />)
+
+    perguntar('Status do título 4?')
+
+    expect((await screen.findByText('ERRO')).tagName).toBe('STRONG')
+    expect(container.querySelector('img')).toBeNull()
+    expect(screen.getByText('No tools were used.')).toBeTruthy()
+  })
+
   it('mostra a mensagem de erro devolvida pela API', async () => {
     vi.stubGlobal(
       'fetch',

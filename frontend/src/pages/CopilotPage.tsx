@@ -1,4 +1,6 @@
 import { useState, type FormEvent } from 'react'
+import Markdown from 'react-markdown'
+import remarkGfm from 'remark-gfm'
 import { perguntarCopilot } from '../api/copilot'
 import ErrorMessage from '../components/ErrorMessage'
 import Loading from '../components/Loading'
@@ -108,11 +110,22 @@ export default function CopilotPage() {
   )
 }
 
+const markdownClass = [
+  'mt-2 space-y-3 text-sm leading-relaxed text-slate-900',
+  '[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mt-1 [&_strong]:font-semibold',
+  '[&_table]:block [&_table]:overflow-x-auto [&_table]:text-xs [&_th]:border-b [&_th]:border-slate-200',
+  '[&_th]:bg-slate-50 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_td]:border-b [&_td]:border-slate-100',
+  '[&_td]:px-2 [&_td]:py-1.5 [&_td]:whitespace-nowrap',
+].join(' ')
+
 function Resposta({ response }: { response: CopilotResponse }) {
   return (
     <div className="rounded-lg border border-slate-200 bg-white p-5 shadow-sm">
       <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Copilot</p>
-      <p className="mt-2 whitespace-pre-wrap text-sm leading-relaxed text-slate-900">{response.answer}</p>
+      {/* O modelo responde em Markdown (listas, tabelas). HTML bruto não é renderizado. */}
+      <div className={markdownClass}>
+        <Markdown remarkPlugins={[remarkGfm]}>{response.answer}</Markdown>
+      </div>
 
       <div className="mt-5 border-t border-slate-100 pt-4">
         <p className="text-xs font-medium uppercase tracking-wide text-slate-500">Tools used</p>
