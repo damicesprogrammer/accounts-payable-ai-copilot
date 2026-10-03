@@ -1,0 +1,24 @@
+[
+  {
+    "id": "finance_titulos_vencidos",
+    "question": "Quais títulos estão vencidos?",
+    "required_tools": ["get_titulos_vencidos"],
+    "expected_contains": [
+      "{vencidos.quantidade}",
+      "{vencidos.valor_total_titulos}",
+      "{vencidos.saldo_pendente_total}"
+    ]
+  },
+  {
+    "id": "finance_saldo_parcialmente_pago",
+    "question": "Quanto falta pagar do título {NF-9008}?",
+    "required_tools": ["get_titulo"],
+    "expected_contains": ["{NF-9008.saldo_pendente}"]
+  },
+  {
+    "id": "finance_saldo_vencido_parcialmente_pago",
+    "question": "Qual é o saldo pendente do título {NF-9011} e ele está vencido?",
+    "required_tools": ["get_titulo"],
+    "expected_contains": ["{NF-9011.saldo_pendente}", "vencido"]
+  }
+]

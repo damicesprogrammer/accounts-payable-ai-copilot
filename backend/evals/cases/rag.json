@@ -1,0 +1,30 @@
+[
+  {
+    "id": "rag_estorno_nova_aprovacao",
+    "question": "Depois que eu desfizer uma baixa, posso pagar o documento imediatamente?",
+    "expected_chunks": ["regras_pagamentos.md › Nova aprovação após estorno"]
+  },
+  {
+    "id": "rag_rateio_metade",
+    "question": "Posso aprovar um título com metade do valor distribuído?",
+    "expected_chunks": ["regras_rateios.md › Rateio de 100% para aprovação"]
+  },
+  {
+    "id": "rag_centro_custo_erp",
+    "question": "A integração falhou porque o centro de custo não existe no ERP. O que fazer?",
+    "expected_chunks": ["erros_integracao.md › Centro de custo inexistente no ERP"]
+  },
+  {
+    "id": "rag_cancelamento",
+    "question": "Quando um título não pode mais ser cancelado?",
+    "expected_chunks": [
+      "regras_titulos.md › Cancelamento",
+      "manual_financeiro.md › Fluxo de cancelamento"
+    ]
+  },
+  {
+    "id": "rag_fora_escopo_lasanha",
+    "question": "Como faço uma lasanha?",
+    "expect_no_sources": true
+  }
+]

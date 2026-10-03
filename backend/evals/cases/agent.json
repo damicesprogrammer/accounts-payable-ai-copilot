@@ -1,0 +1,26 @@
+[
+  {
+    "id": "agent_situacao_titulo",
+    "question": "Qual é a situação do título {NF-9004}?",
+    "required_tools": ["get_titulo"],
+    "expected_contains": ["erro"]
+  },
+  {
+    "id": "agent_titulo_erro",
+    "question": "Por que o título {NF-9004} está com erro e como posso corrigir?",
+    "required_tools": ["get_titulo", "get_logs_titulo", "search_documentation"],
+    "expected_contains": ["centro de custo", "1001", "reprocess"]
+  },
+  {
+    "id": "agent_regra_estorno_titulo_pago",
+    "question": "O que acontece quando um pagamento de um título pago é estornado?",
+    "required_tools": ["search_documentation"],
+    "expected_contains": ["PENDENTE", ["nova aprovação", "aprovado novamente", "aprovado de novo", "aprovar novamente", "aprovação novamente"]]
+  },
+  {
+    "id": "agent_regra_rateio_incompleto",
+    "question": "Posso aprovar um título que está apenas 50% rateado?",
+    "required_tools": ["search_documentation"],
+    "expected_contains": ["100%", ["RATEIO_INCOMPLETO", "não pode", "não é possível", "não será", "bloquead", "impede"]]
+  }
+]

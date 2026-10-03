@@ -20,3 +20,5 @@ Thumbs.db
 .claude/skills/playwright-cli/
 # Roteiros de tarefa locais do Claude Code
 .claude/fase5-correcao.md
+# Resultados locais dos evals (python -m evals.runner --output ...)
+eval-results*.json
