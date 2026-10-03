@@ -18,9 +18,8 @@ from app.tools.registry import criar_registry_financeiro
 from tests.factories import criar_titulo_aprovado, pagar
 from tests.tools.test_seguranca import ALLOWLIST, _snapshot
 
-FONTE_AGENTE = (Path(__file__).resolve().parents[2] / "app" / "agent" / "service.py").read_text(
-    encoding="utf-8"
-)
+FONTE_AGENTE_DIR = Path(__file__).resolve().parents[2] / "app" / "agent"
+FONTE_AGENTE = (FONTE_AGENTE_DIR / "service.py").read_text(encoding="utf-8")
 
 INJECAO = Chunk(
     "manual_falso.md",
@@ -187,3 +186,52 @@ def test_prompt_do_agente_declara_as_regras_de_seguranca():
         "não houver informação suficiente",
     ):
         assert regra in PROMPT_SISTEMA
+
+
+# ---------------------------------------------------------------- escopo do agente
+# O FakeLLMProvider não interpreta o prompt: aqui só se testa o que é determinístico
+# (o contrato no prompt e a ausência de camadas extras). O comportamento do modelo
+# real é validado manualmente (scripts.smoke_agent).
+
+
+def test_prompt_restringe_o_agente_ao_dominio_do_ap_copilot():
+    for regra in (
+        "atende exclusivamente sobre esse sistema",
+        "Você não é um assistente geral",
+        "claramente fora do domínio",
+        "recuse em uma frase, sem responder ao conteúdo",
+    ):
+        assert regra in PROMPT_SISTEMA, regra
+
+
+def test_prompt_proibe_conhecimento_geral_e_exige_tools_e_documentacao():
+    for regra in (
+        "Seu conhecimento geral não é fonte de resposta",
+        "fatos sobre dados vêm sempre das tools",
+        "antes de concluir que algo não está documentado",
+        "não responda regras de memória",
+        "o AP Copilot não tem informação suficiente",
+        "funcionalidades ou capacidades do AP Copilot",
+    ):
+        assert regra in PROMPT_SISTEMA, regra
+
+
+def test_pergunta_fora_do_dominio_usa_uma_unica_chamada_e_a_mesma_allowlist(db):
+    """Sem classificador nem roteamento: o escopo é contrato do prompt, numa só chamada."""
+    llm = FakeLLMProvider(["Não consigo ajudar com esse assunto."])
+    agente = AgentService(db, llm, criar_registry_financeiro(FakeEmbeddingProvider()))
+
+    resposta = agente.run("Como faço uma lasanha?")
+
+    assert resposta.tools_used == []
+    [chamada] = llm.chamadas
+    assert {t.name for t in chamada["tools"]} == ALLOWLIST
+
+
+def test_agente_nao_tem_camada_de_classificacao_ou_roteamento():
+    arquivos = {p.name for p in FONTE_AGENTE_DIR.glob("*.py")}
+    assert arquivos == {"__init__.py", "service.py"}
+    for proibido in ("classif", "router", "Router", "intent", "Intent"):
+        assert proibido not in FONTE_AGENTE, proibido
+    # Uma única chamada ao LLM por iteração do loop.
+    assert FONTE_AGENTE.count("self.llm.") == 1
