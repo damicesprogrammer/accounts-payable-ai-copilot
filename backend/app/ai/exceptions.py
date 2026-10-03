@@ -23,3 +23,7 @@ class LLMProviderError(LLMError):
 
 class LLMStructuredOutputError(LLMError):
     """A resposta não é compatível com o schema solicitado."""
+
+
+class AgentIterationLimitError(LLMError):
+    """O agente atingiu o limite de iterações com o modelo ainda pedindo tools."""
