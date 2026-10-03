@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 
-from app.api.routes import centros_custo, fornecedores, titulos
+from app.api.routes import ai, centros_custo, fornecedores, titulos
 from app.core.config import get_settings
 from app.core.error_handlers import register_error_handlers
 from app.core.logging import RequestIdMiddleware, configure_logging
@@ -18,6 +18,7 @@ register_error_handlers(app)
 app.include_router(fornecedores.router)
 app.include_router(centros_custo.router)
 app.include_router(titulos.router)
+app.include_router(ai.router)
 
 
 @app.get("/health", tags=["infra"])
