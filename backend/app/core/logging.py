@@ -1,6 +1,6 @@
 """Logging estruturado (JSON) com request id.
 
-Estes são logs técnicos da aplicação (stdout). Não confundir com LogIntegracao,
+Estes são logs técnicos da aplicação (stdout). Não confundir com LogAuditoria,
 que é a trilha de auditoria de negócio persistida no banco.
 """
 

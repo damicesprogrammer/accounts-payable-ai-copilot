@@ -73,10 +73,10 @@ class Pagamento(Base):
     )
 
 
-class LogIntegracao(Base):
+class LogAuditoria(Base):
     """Trilha de auditoria de negócio. titulo_id é nulo para eventos de cadastro."""
 
-    __tablename__ = "logs_integracao"
+    __tablename__ = "logs_auditoria"
 
     id: Mapped[int] = mapped_column(primary_key=True)
     titulo_id: Mapped[int | None] = mapped_column(

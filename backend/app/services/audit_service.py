@@ -1,6 +1,6 @@
 from sqlalchemy.orm import Session
 
-from app.models import LogIntegracao, StatusLog, TipoLog
+from app.models import LogAuditoria, StatusLog, TipoLog
 from app.repositories.log_repository import LogRepository
 
 
@@ -22,7 +22,7 @@ class AuditService:
         *,
         titulo_id: int | None = None,
         status: StatusLog = StatusLog.SUCESSO,
-    ) -> LogIntegracao:
+    ) -> LogAuditoria:
         return self.repo.add(
-            LogIntegracao(titulo_id=titulo_id, tipo=tipo, status=status, mensagem=mensagem)
+            LogAuditoria(titulo_id=titulo_id, tipo=tipo, status=status, mensagem=mensagem)
         )

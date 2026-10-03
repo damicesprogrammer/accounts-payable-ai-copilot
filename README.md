@@ -44,7 +44,7 @@ As variáveis de ambiente têm defaults no `docker-compose.yml`; para alterá-la
 ```
 HTTP ──► api/routes ──► services ──► repositories ──► PostgreSQL
             │               │
-         schemas        exceções de domínio  +  AuditService (LogIntegracao)
+         schemas        exceções de domínio  +  AuditService (LogAuditoria)
         (Pydantic)            │
                     core/error_handlers  →  resposta HTTP padronizada
 ```

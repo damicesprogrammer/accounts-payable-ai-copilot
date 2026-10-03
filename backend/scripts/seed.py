@@ -260,7 +260,7 @@ class Seeder:
 def reset(db: Session) -> None:
     db.execute(
         text(
-            "TRUNCATE logs_integracao, pagamentos, rateios_titulo, titulos_pagar, "
+            "TRUNCATE logs_auditoria, pagamentos, rateios_titulo, titulos_pagar, "
             "centros_custo, fornecedores RESTART IDENTITY CASCADE"
         )
     )

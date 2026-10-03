@@ -4,7 +4,7 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessRuleError, ConflictError, NotFoundError
-from app.models import LogIntegracao, StatusLog, StatusTitulo, TipoLog, TituloPagar
+from app.models import LogAuditoria, StatusLog, StatusTitulo, TipoLog, TituloPagar
 from app.repositories.log_repository import LogRepository
 from app.repositories.pagamento_repository import PagamentoRepository
 from app.repositories.rateio_repository import RateioRepository
@@ -72,7 +72,7 @@ class TituloService:
             vencido=(titulo.status in status_titulo.EM_ABERTO and titulo.data_vencimento < hoje),
         )
 
-    def listar_logs(self, titulo_id: int) -> Sequence[LogIntegracao]:
+    def listar_logs(self, titulo_id: int) -> Sequence[LogAuditoria]:
         self.obter(titulo_id)  # 404 se o título não existir
         return LogRepository(self.db).list_by_titulo(titulo_id)
 

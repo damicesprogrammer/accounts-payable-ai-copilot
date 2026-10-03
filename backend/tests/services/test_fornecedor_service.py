@@ -3,7 +3,7 @@ from sqlalchemy import select
 
 from app.core import cnpj
 from app.core.exceptions import ConflictError, NotFoundError
-from app.models import LogIntegracao, TipoLog
+from app.models import LogAuditoria, TipoLog
 from app.schemas.fornecedor import FornecedorCreate, FornecedorUpdate
 from app.services.fornecedor_service import FornecedorService
 from tests.factories import criar_fornecedor
@@ -34,7 +34,7 @@ def test_inativar_fornecedor_gera_log(db):
     FornecedorService(db).atualizar(fornecedor.id, FornecedorUpdate(nome="X", ativo=False))
 
     mensagens = db.scalars(
-        select(LogIntegracao.mensagem).where(LogIntegracao.tipo == TipoLog.CADASTRO)
+        select(LogAuditoria.mensagem).where(LogAuditoria.tipo == TipoLog.CADASTRO)
     ).all()
     assert f"Fornecedor {fornecedor.id} inativado." in mensagens
 

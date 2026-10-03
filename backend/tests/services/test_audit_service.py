@@ -1,6 +1,6 @@
 from sqlalchemy import func, select
 
-from app.models import LogIntegracao, StatusLog, TipoLog
+from app.models import LogAuditoria, StatusLog, TipoLog
 from app.services.audit_service import AuditService
 
 
@@ -17,5 +17,5 @@ def test_log_e_descartado_quando_a_transacao_falha(db):
     AuditService(db).registrar(TipoLog.CADASTRO, "operação que vai falhar")
     db.rollback()
 
-    total = db.scalar(select(func.count()).select_from(LogIntegracao))
+    total = db.scalar(select(func.count()).select_from(LogAuditoria))
     assert total == 0
