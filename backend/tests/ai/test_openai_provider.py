@@ -51,10 +51,10 @@ class StubCompletions:
     parse = _responder
 
 
-def _provider(resultado) -> tuple[OpenAIProvider, StubCompletions]:
+def _provider(resultado, **opcoes) -> tuple[OpenAIProvider, StubCompletions]:
     completions = StubCompletions(resultado)
     client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
-    return OpenAIProvider(SecretStr(API_KEY), "gpt-teste", client=client), completions
+    return OpenAIProvider(SecretStr(API_KEY), "gpt-teste", client=client, **opcoes), completions
 
 
 def _completion(message: dict, finish_reason: str = "stop") -> ChatCompletion:
@@ -329,3 +329,40 @@ def test_provider_configurado_e_criado_sem_chamar_a_api():
 def test_api_financeira_funciona_sem_api_key(client):
     assert client.get("/health").status_code == 200
     assert client.get("/titulos").status_code == 200
+
+
+# ---------------------------------------------------------------- reasoning_effort
+
+
+def test_reasoning_effort_nao_e_enviado_quando_nao_configurado():
+    provider, completions = _provider(_completion({"role": "assistant", "content": "ok"}))
+
+    provider.generate(PERGUNTA, tools=[GET_TITULO])
+
+    assert "reasoning_effort" not in completions.kwargs
+
+
+def test_reasoning_effort_configurado_e_enviado_no_generate_e_no_structured():
+    provider, completions = _provider(
+        _completion({"role": "assistant", "content": "ok"}), reasoning_effort="none"
+    )
+    provider.generate(PERGUNTA, tools=[GET_TITULO])
+    assert completions.kwargs["reasoning_effort"] == "none"
+
+    provider, completions = _provider(
+        _parsed(Diagnostico(titulo_id=1, problema="x")), reasoning_effort="low"
+    )
+    provider.generate_structured(PERGUNTA, Diagnostico)
+    assert completions.kwargs["reasoning_effort"] == "low"
+
+
+@pytest.mark.parametrize(("valor", "esperado"), [("none", {"reasoning_effort": "none"}), ("", {})])
+def test_reasoning_effort_vem_da_configuracao(valor, esperado):
+    settings = Settings(
+        _env_file=None,
+        openai_api_key=API_KEY,
+        openai_model="gpt-teste",
+        openai_reasoning_effort=valor,
+    )
+
+    assert get_llm_provider(settings)._opcoes == esperado

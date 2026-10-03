@@ -263,6 +263,7 @@ Resultado padronizado, serializável em JSON (valores monetários como string co
 | `LLM_PROVIDER` | `openai` (único suportado) |
 | `OPENAI_API_KEY` | Chave da API. Lida como `SecretStr`: não aparece em `repr`, logs ou respostas |
 | `OPENAI_MODEL` | Modelo de chat (obrigatório para chamadas reais) |
+| `OPENAI_REASONING_EFFORT` | Opcional. Repassado como `reasoning_effort` quando definido (ex.: `none`); vazio = não enviado |
 | `OPENAI_EMBEDDING_MODEL` | Modelo de embeddings (default `text-embedding-3-small`) |
 
 A API financeira sobe e funciona sem essas variáveis; a ausência só gera erro (`LLMConfigurationError`) quando algo que usa o LLM é chamado. Defina-as no `.env` da raiz, que não é versionado.
@@ -448,7 +449,7 @@ docker compose exec api python -m scripts.smoke_agent --pergunta "Quais títulos
 
 Mostra a pergunta, as tools usadas e a resposta final. Consome tokens e não faz parte do `pytest`.
 
-> **Modelo com tools no Chat Completions:** alguns modelos de raciocínio recusam function tools em `/v1/chat/completions` com o raciocínio ativo (HTTP 400). O `OPENAI_MODEL` precisa aceitar tools nesse endpoint.
+> **Modelo de raciocínio com tools no Chat Completions:** alguns modelos recusam function tools em `/v1/chat/completions` com o raciocínio ativo (HTTP 400, "use /v1/responses or set reasoning_effort to 'none'"). Nesse caso, defina `OPENAI_REASONING_EFFORT=none`. Modelos sem raciocínio não aceitam o parâmetro: deixe a variável vazia.
 
 ---
 

@@ -22,6 +22,7 @@ def get_llm_provider(settings: Settings | None = None) -> LLMProvider:
         api_key=settings.openai_api_key,
         model=settings.openai_model,
         timeout=settings.llm_timeout_seconds,
+        reasoning_effort=settings.openai_reasoning_effort,
     )
 
 

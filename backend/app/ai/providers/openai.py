@@ -28,9 +28,15 @@ class OpenAIProvider:
         model: str,
         *,
         timeout: float = 30.0,
+        reasoning_effort: str | None = None,
         client: openai.OpenAI | None = None,  # injetável nos testes (sem rede)
     ) -> None:
         self.model = model
+        # Repassado só quando configurado: modelos sem raciocínio recusam o parâmetro.
+        # Ex.: alguns modelos de raciocínio só aceitam tools neste endpoint com "none".
+        self._opcoes: dict[str, Any] = (
+            {"reasoning_effort": reasoning_effort} if reasoning_effort else {}
+        )
         self._client = client or openai.OpenAI(
             api_key=api_key.get_secret_value(), timeout=timeout, max_retries=1
         )
@@ -38,7 +44,11 @@ class OpenAIProvider:
     def generate(
         self, messages: list[ChatMessage], *, tools: list[ToolDefinition] | None = None
     ) -> LLMResponse:
-        kwargs: dict[str, Any] = {"model": self.model, "messages": _mensagens(messages)}
+        kwargs: dict[str, Any] = {
+            "model": self.model,
+            "messages": _mensagens(messages),
+            **self._opcoes,
+        }
         if tools:
             kwargs["tools"] = [_tool_openai(t) for t in tools]
 
@@ -63,6 +73,7 @@ class OpenAIProvider:
             model=self.model,
             messages=_mensagens(messages),
             response_format=response_model,
+            **self._opcoes,
         )
         choice = completion.choices[0]
         # Recusa ou ausência de objeto não é sucesso: verifica antes de registrar.
