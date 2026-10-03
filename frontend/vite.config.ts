@@ -10,5 +10,6 @@ export default defineConfig({
   },
   test: {
     environment: 'jsdom',
+    globals: true, // permite ao Testing Library limpar o DOM entre testes
   },
 })
