@@ -235,7 +235,7 @@ ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repositor
 | `get_rateios_titulo(titulo_id)` | `RateioService.listar` |
 | `get_pagamentos_titulo(titulo_id)` | `PagamentoService.listar` |
 | `get_logs_titulo(titulo_id)` | `TituloService.listar_logs` |
-| `get_titulos_vencidos()` | `TituloService.listar(vencidos=True)` |
+| `get_titulos_vencidos()` | `TituloService.resumo_vencidos`: `quantidade`, `valor_total_titulos` (soma dos valores originais), `saldo_pendente_total` (soma do que falta pagar) e os títulos com valor total, pago e saldo |
 | `search_documentation(query)` | `RAGService.search`: só retrieval (`source`, `section`, `content`, `score`), **não** chama o LLM |
 
 Resultado padronizado, serializável em JSON (valores monetários como string com 2 casas):
