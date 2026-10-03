@@ -53,3 +53,12 @@ class TituloRead(ReadSchema):
     status: StatusTitulo
     created_at: datetime
     updated_at: datetime
+
+
+class TituloDetalhe(TituloRead):
+    """Título com a situação financeira consolidada (valores calculados, não armazenados)."""
+
+    valor_rateado: Decimal
+    valor_pago: Decimal
+    saldo_pendente: Decimal
+    vencido: bool

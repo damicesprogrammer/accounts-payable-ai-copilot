@@ -4,6 +4,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 
 from app.models import Pagamento, StatusPagamento
+from app.models.types import CENTAVOS
 from app.repositories.base import BaseRepository
 
 
@@ -20,4 +21,4 @@ class PagamentoRepository(BaseRepository[Pagamento]):
             Pagamento.titulo_id == titulo_id,
             Pagamento.status == StatusPagamento.CONFIRMADO,
         )
-        return Decimal(self.db.scalar(stmt))
+        return Decimal(self.db.scalar(stmt)).quantize(CENTAVOS)

@@ -11,7 +11,7 @@ from app.models import StatusLog, StatusTitulo, TipoLog
 from app.repositories.log_repository import LogRepository
 from app.schemas.titulo import TituloCreate, TituloUpdate
 from app.services.titulo_service import TituloService
-from tests.factories import criar_fornecedor, criar_titulo
+from tests.factories import criar_fornecedor, criar_titulo, criar_titulo_aprovado, pagar
 
 HOJE = date(2026, 10, 3)
 
@@ -192,3 +192,35 @@ def test_listar_vencidos_considera_apenas_titulos_em_aberto(db):
     vencidos = TituloService(db).listar(vencidos=True, hoje=HOJE)
 
     assert [t.id for t in vencidos] == [vencido.id]
+
+
+# ---------------------------------------------------------------- detalhe financeiro
+
+
+def test_detalhe_consolida_rateio_pagamentos_e_vencimento(db):
+    titulo = criar_titulo_aprovado(
+        db,
+        valor="1000.00",
+        emissao=HOJE - timedelta(days=60),
+        vencimento=HOJE - timedelta(days=5),
+    )
+    pagar(db, titulo, "300.00")
+
+    detalhe = TituloService(db).obter_detalhe(titulo.id, hoje=HOJE)
+
+    assert detalhe.valor_rateado == Decimal("1000.00")
+    assert detalhe.valor_pago == Decimal("300.00")
+    assert detalhe.saldo_pendente == Decimal("700.00")
+    assert detalhe.vencido is True
+
+
+def test_titulo_pago_nao_e_considerado_vencido(db):
+    titulo = criar_titulo_aprovado(
+        db, valor="100.00", emissao=HOJE - timedelta(days=60), vencimento=HOJE - timedelta(days=5)
+    )
+    pagar(db, titulo, "100.00")
+
+    detalhe = TituloService(db).obter_detalhe(titulo.id, hoje=HOJE)
+
+    assert detalhe.vencido is False
+    assert detalhe.saldo_pendente == Decimal("0.00")

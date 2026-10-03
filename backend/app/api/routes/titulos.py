@@ -5,7 +5,13 @@ from app.models import StatusTitulo
 from app.schemas.log import LogRead
 from app.schemas.pagamento import PagamentoCreate, PagamentoRead
 from app.schemas.rateio import RateioCreate, RateioRead
-from app.schemas.titulo import CancelamentoInput, TituloCreate, TituloRead, TituloUpdate
+from app.schemas.titulo import (
+    CancelamentoInput,
+    TituloCreate,
+    TituloDetalhe,
+    TituloRead,
+    TituloUpdate,
+)
 from app.services.pagamento_service import PagamentoService
 from app.services.rateio_service import RateioService
 from app.services.titulo_service import TituloService
@@ -30,9 +36,9 @@ def listar_titulos(
     )
 
 
-@router.get("/{titulo_id}", response_model=TituloRead, responses=ERROS_404)
+@router.get("/{titulo_id}", response_model=TituloDetalhe, responses=ERROS_404)
 def obter_titulo(titulo_id: int, db: DbSession):
-    return TituloService(db).obter(titulo_id)
+    return TituloService(db).obter_detalhe(titulo_id)
 
 
 @router.post(

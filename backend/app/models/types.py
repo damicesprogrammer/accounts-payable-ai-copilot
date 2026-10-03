@@ -1,9 +1,11 @@
+from decimal import Decimal
 from enum import StrEnum
 
 from sqlalchemy import Enum as SAEnum
 from sqlalchemy import Numeric
 
 # Dinheiro sempre como NUMERIC(14,2) <-> Decimal. Nunca float.
+CENTAVOS = Decimal("0.01")
 Money = Numeric(14, 2, asdecimal=True)
 
 

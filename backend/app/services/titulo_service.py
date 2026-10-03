@@ -9,7 +9,7 @@ from app.repositories.log_repository import LogRepository
 from app.repositories.pagamento_repository import PagamentoRepository
 from app.repositories.rateio_repository import RateioRepository
 from app.repositories.titulo_repository import TituloRepository
-from app.schemas.titulo import TituloCreate, TituloUpdate
+from app.schemas.titulo import TituloCreate, TituloDetalhe, TituloRead, TituloUpdate
 from app.services import status_titulo
 from app.services.audit_service import AuditService
 from app.services.fornecedor_service import FornecedorService
@@ -53,6 +53,24 @@ class TituloService:
         if titulo is None:
             raise self._nao_encontrado(titulo_id)
         return titulo
+
+    def obter_detalhe(self, titulo_id: int, *, hoje: date | None = None) -> TituloDetalhe:
+        """Título + situação financeira consolidada.
+
+        É a visão "explicável" do título: responde quanto falta ratear, quanto
+        falta pagar e se está vencido — base para a futura tool get_titulo.
+        """
+        titulo = self.obter(titulo_id)
+        valor_rateado = RateioRepository(self.db).soma_por_titulo(titulo.id)
+        valor_pago = PagamentoRepository(self.db).soma_confirmados(titulo.id)
+        hoje = hoje or date.today()
+        return TituloDetalhe(
+            **TituloRead.model_validate(titulo).model_dump(),
+            valor_rateado=valor_rateado,
+            valor_pago=valor_pago,
+            saldo_pendente=titulo.valor_total - valor_pago,
+            vencido=(titulo.status in status_titulo.EM_ABERTO and titulo.data_vencimento < hoje),
+        )
 
     def listar_logs(self, titulo_id: int) -> Sequence[LogIntegracao]:
         self.obter(titulo_id)  # 404 se o título não existir

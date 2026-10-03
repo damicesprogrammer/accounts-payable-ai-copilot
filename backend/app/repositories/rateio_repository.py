@@ -4,6 +4,7 @@ from decimal import Decimal
 from sqlalchemy import func, select
 
 from app.models import RateioTitulo
+from app.models.types import CENTAVOS
 from app.repositories.base import BaseRepository
 
 
@@ -28,7 +29,7 @@ class RateioRepository(BaseRepository[RateioTitulo]):
         stmt = select(func.coalesce(func.sum(RateioTitulo.valor), 0)).where(
             RateioTitulo.titulo_id == titulo_id
         )
-        return Decimal(self.db.scalar(stmt))
+        return Decimal(self.db.scalar(stmt)).quantize(CENTAVOS)
 
     def delete(self, rateio: RateioTitulo) -> None:
         self.db.delete(rateio)

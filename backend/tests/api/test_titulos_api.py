@@ -74,3 +74,13 @@ def test_filtrar_por_status(client, db):
     response = client.get("/titulos", params={"status": "CANCELADO"})
 
     assert [t["id"] for t in response.json()] == [cancelado.id]
+
+
+def test_detalhe_expoe_resumo_financeiro(client, db):
+    titulo = criar_titulo(db, valor="500.00")
+
+    detalhe = client.get(f"/titulos/{titulo.id}").json()
+
+    assert detalhe["valor_rateado"] == "0.00"
+    assert detalhe["saldo_pendente"] == "500.00"
+    assert detalhe["vencido"] is False
