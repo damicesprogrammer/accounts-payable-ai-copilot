@@ -1,587 +1,692 @@
 # AP Copilot
 
-Módulo simplificado de **Títulos a Pagar** com um Copilot de IA, desenvolvido como projeto de portfólio.
+> **AI Engineering applied to Accounts Payable** — deterministic financial rules, typed tool calling, RAG with pgvector, a controlled agent loop, and real-model evaluations.
 
-O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio reais e bem testadas, que serve de base para demonstrar engenharia de IA aplicada — tool calling, RAG, embeddings e agentes — **sem** abrir mão de segurança: o LLM nunca acessa o banco nem executa SQL, apenas chama ferramentas explícitas da aplicação.
+AP Copilot is a portfolio project that demonstrates how an LLM can operate on top of a realistic business domain **without direct database access, arbitrary SQL, or LLM-owned financial calculations**.
 
-> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling), 3 (RAG com pgvector), 4 (agent loop), 5 (frontend) e 6 (evals e hardening) concluídas. Veja o [roadmap](#roadmap).
+It is intentionally not a full ERP. The domain is small enough to understand end-to-end, but it still includes realistic financial rules, auditability, failure scenarios, retrieval, tool use, evaluation, and a clear separation between the model, the business layer, and the presentation layer.
 
 ![AP Copilot demo](docs/assets/ap-copilot-demo.gif)
 
----
+## Highlights
 
-## Stack
+- **Deterministic financial backend** with explicit business rules, transaction boundaries, audit logs, and row locking.
+- **Typed tool calling** through an explicit allowlist — the LLM never receives arbitrary database access.
+- **Controlled agent loop** with bounded iterations (`MAX_ITERATIONS = 5`) and structured tool errors.
+- **RAG with PostgreSQL + pgvector**, implemented without an agent/RAG framework so each step stays visible.
+- **Backend-owned financial calculations** using `Decimal` / `NUMERIC(14,2)` — the model explains values instead of calculating money.
+- **Real-model eval suite** (25 cases) covering agent tool selection, finance, safety, RAG retrieval, and regressions found in manual use — including an EN-US currency regression.
+- **EN-US / PT-BR UI and Copilot responses**, while tool arguments, status codes, error codes, and BRL as the domain currency stay unchanged.
+- **Read-only AI surface by design** — no financial write tools are exposed to the agent.
 
-| Camada | Tecnologias |
+## Demo scenarios
+
+The seeded dataset contains deterministic scenarios designed for testing and demonstration.
+
+| Question | Expected behavior |
 |---|---|
-| API | Python 3.12, FastAPI, Pydantic v2 |
-| Persistência | PostgreSQL 16 (imagem com pgvector), SQLAlchemy 2.0, Alembic |
-| Qualidade | pytest (contra Postgres real), Ruff |
-| IA | SDK oficial da OpenAI (atrás de um contrato próprio), Pydantic para structured outputs, pgvector para busca semântica |
-| Frontend | React, TypeScript, Vite, Tailwind CSS, React Router, Vitest |
-| Infra | Docker, Docker Compose, uv |
+| `How many pending invoices do we have?` | Calls `get_titulos_por_status(status="PENDENTE")` |
+| `Which invoices are overdue?` | Calls `get_titulos_vencidos()` and uses backend-calculated totals |
+| `Why is invoice 4 in error and how can I fix it?` | Combines title data, audit logs, and documented rules |
+| `How many active suppliers do we have?` | Calls `get_fornecedores(ativo=true)` |
+| `Can I approve an invoice that is only 50% allocated?` | Uses `search_documentation` for the documented rule |
+| `How do I make lasagna?` | Refuses because the question is outside the AP Copilot domain |
 
-## Como executar
-
-Pré-requisito: Docker com Docker Compose. Node.js 22+ só é necessário para desenvolver o frontend fora do Docker.
-
-### Stack completa com Docker
-
-```bash
-docker compose up -d --build                       # sobe Postgres + API (aplica migrations) + frontend
-docker compose exec api python -m scripts.seed     # popula com dados sintéticos
-docker compose exec api python -m scripts.index_docs  # indexa a base de conhecimento (requer OPENAI_API_KEY)
-```
-
-URLs locais:
-
-- Frontend: http://localhost:5173
-- API: http://localhost:8000
-- Documentação interativa (OpenAPI): http://localhost:8000/docs
-
-```bash
-docker compose exec api pytest                     # testes
-docker compose exec api ruff check .               # lint
-docker compose exec api python -m scripts.seed --reset   # recria os dados
-```
-
-As variáveis de ambiente têm defaults no `docker-compose.yml`; para alterá-las, copie `.env.example` para `.env`.
-
-### Desenvolvimento do frontend (Node local, com hot reload)
-
-Com a API rodando (por exemplo, `docker compose up -d db api`):
-
-```bash
-cd frontend
-npm install
-npm run dev        # http://localhost:5173
-npm test           # testes (Vitest)
-npm run lint       # ESLint
-npm run build      # type-check + build de produção
-```
-
-A URL da API vem de `VITE_API_URL` (default `http://localhost:8000`; ver `frontend/.env.example`). A porta 5173 é fixa porque é a origem liberada no CORS da API; não rode o `npm run dev` e o container `frontend` ao mesmo tempo.
+The UI shows the **tools actually executed by the application**. `tools_used` is built from real executions, not generated by the model.
 
 ---
 
-## Arquitetura
+## Architecture
 
+```text
+                                  ┌───────────────────┐
+                                  │   React frontend  │
+                                  │   EN-US / PT-BR   │
+                                  └─────────┬─────────┘
+                                            │
+                                            ▼
+┌──────────────┐      ┌─────────────────────────────────────────┐
+│   OpenAI     │◄────►│                FastAPI                  │
+│ chat + emb.  │      │                                         │
+└──────────────┘      │  API routes                             │
+                      │      │                                  │
+                      │      ├────► AgentService                 │
+                      │      │          │                        │
+                      │      │          ▼                        │
+                      │      │      ToolRegistry                 │
+                      │      │          │                        │
+                      │      │          ▼                        │
+                      │      │        Tools                      │
+                      │      │          │                        │
+                      │      ├──────────┴────► Services          │
+                      │      │                    │              │
+                      │      │                    ▼              │
+                      │      │               Repositories        │
+                      └──────┼────────────────────┼──────────────┘
+                             │                    │
+                             │                    ▼
+                             │           PostgreSQL + pgvector
+                             │
+                             └────► RAGService
+                                      │
+                                      └────► embeddings + vector search
 ```
-HTTP ──► api/routes ──► services ──► repositories ──► PostgreSQL
-            │               │
-         schemas        exceções de domínio  +  AuditService (LogAuditoria)
-        (Pydantic)            │
-                    core/error_handlers  →  resposta HTTP padronizada
+
+### Business flow
+
+```text
+HTTP
+  ↓
+Pydantic schemas
+  ↓
+Services            ← business rules + transaction boundary
+  ↓
+Repositories        ← data access only
+  ↓
+PostgreSQL
 ```
 
-| Camada | Responsabilidade |
-|---|---|
-| `api/` | Recebe a requisição, valida o formato (Pydantic), chama o service. **Sem regra de negócio.** |
-| `schemas/` | Contratos de entrada/saída. Validações de formato (CNPJ, valores positivos, datas). |
-| `services/` | **Regras de negócio** e fronteira da transação (cada operação de escrita = um commit). |
-| `repositories/` | Acesso a dados (queries). Sem regras, sem commit. |
-| `models/` | Entidades ORM e constraints de banco. |
-| `core/` | Configuração, sessão de banco, exceções, logging estruturado. |
-| `ai/` | Contratos de LLM e embeddings e seus providers (OpenAI e fake para testes). Ver [Camada de IA](#camada-de-ia). |
-| `tools/` | Funções que o LLM pode solicitar (allowlist explícita). Chamam services, nunca repositories. |
-| `rag/` | RAG manual: chunking por seção Markdown e `RAGService` (indexar, search, answer). Ver [RAG](#rag-base-de-conhecimento). |
-| `agent/` | `AgentService`: loop controlado de tool calling. Ver [Agente Copilot](#agente-copilot-agent-loop). |
+### AI tool flow
 
-### Decisões técnicas
+```text
+LLM
+  ↓ requests a named tool
+ToolRegistry         ← explicit allowlist
+  ↓ validates arguments
+Typed Tool
+  ↓
+Service
+  ↓
+Repository
+  ↓
+PostgreSQL
+```
 
-- **Dinheiro em `NUMERIC(14,2)` / `Decimal`**, nunca `float`.
-- **Defesa em profundidade** para invariantes: Pydantic (borda) → service (regra) → `CHECK` no banco.
-- **Auditoria transacional:** o log é gravado na mesma transação da operação. Se ela falhar, o log também é descartado.
-- **Lock de linha (`SELECT … FOR UPDATE`)** em toda alteração de título: dois pagamentos simultâneos não conseguem, juntos, exceder o saldo.
-- **Máquina de estados explícita** (`services/status_titulo.py`) e um único ponto de mudança de status (`TituloService.mudar_status`).
-- **Erros de domínio com código estável** (`RATEIO_INCOMPLETO`, `TITULO_CANCELADO`…), legíveis por máquina — serão usados pelo Copilot para explicar recusas.
-- **Enums como `VARCHAR + CHECK`** em vez de `ENUM` nativo: mais fáceis de evoluir por migration.
-- **Testes contra PostgreSQL real**, com schema criado pelas próprias migrations e rollback por teste.
-- **SQLAlchemy síncrono:** mais simples de ler e testar; o FastAPI executa rotas síncronas em threadpool.
-- **Sem exclusão física** de fornecedores e centros de custo: inativação preserva o histórico.
+The LLM does **not** receive a SQL executor, repository, database session, dynamic import mechanism, or generic query tool.
 
 ---
 
-## Domínio
+## Core design decisions
 
-### Ciclo de vida do título
+### Backend calculates; the LLM explains
 
-```
-PENDENTE ──aprovar──► APROVADO ──(pagamentos = valor_total)──► PAGO
- ▲ │  ▲                   │                                       │
- │ │  └──reprocessar── ERRO ◄── falha de integração               │
- │ └──────cancelar────────┴──► CANCELADO                          │
- └─────────────────────── estorno de pagamento ───────────────────┘
-```
+Financial aggregates are computed by the backend.
 
-- `CANCELADO` é final.
-- `PAGO` não aceita novos pagamentos, edição, alteração de rateios nem cancelamento. A única operação permitida é **estornar um pagamento confirmado**, que devolve o título para `PENDENTE` (não para `APROVADO`). Assim, ele precisa ser aprovado de novo antes de receber novos pagamentos.
-- Estorno em título `APROVADO` mantém o status e apenas recalcula o saldo.
-- Dados e rateios só podem ser alterados em `PENDENTE` ou `ERRO`.
+For example, `get_titulos_vencidos()` returns deterministic values such as:
 
-### Regras de negócio
+- number of overdue titles;
+- original total value;
+- total outstanding balance;
+- per-title total, paid amount, and remaining balance.
 
-| # | Regra | Onde | Código de erro |
-|---|---|---|---|
-| 1 | Soma dos rateios ≤ valor do título (também ao reduzir o valor) | `RateioService.adicionar`, `TituloService.atualizar` | `RATEIO_EXCEDE_VALOR_TITULO`, `VALOR_MENOR_QUE_RATEIO` |
-| 2 | Título só é PAGO quando pagamentos confirmados = valor total; a quitação é **automática** | `PagamentoService.registrar`, `TituloService._garantir_quitado` | `PAGAMENTOS_NAO_QUITAM_TITULO` |
-| 3 | Fornecedor inativo não recebe novos títulos | `TituloService.criar` | `FORNECEDOR_INATIVO` |
-| 4 | Centro de custo inativo não recebe novos rateios | `RateioService.adicionar` | `CENTRO_CUSTO_INATIVO` |
-| 5 | Título cancelado não recebe pagamentos | `PagamentoService.registrar` | `TITULO_CANCELADO` |
-| 6 | Valores negativos não são permitidos | schemas + `CHECK` no banco | HTTP 422 de validação |
-| 7 | Toda alteração relevante gera log | `AuditService` (em todos os services) | — |
-| + | Aprovação exige rateio de exatamente 100% | `TituloService.aprovar` | `RATEIO_INCOMPLETO` |
-| + | Pagamento somente para título APROVADO | `PagamentoService.registrar` | `TITULO_NAO_APROVADO` |
-| + | Pagamento não pode exceder o saldo pendente | `PagamentoService.registrar` | `PAGAMENTO_EXCEDE_SALDO` |
-| + | Título com pagamentos confirmados não pode ser cancelado | `TituloService.cancelar` | `TITULO_COM_PAGAMENTOS` |
-| + | Estorno em título PAGO reabre o título como PENDENTE | `PagamentoService.estornar` | — |
-| + | Valor do título não pode ficar abaixo do já pago (título reaberto) | `TituloService.atualizar` | `VALOR_MENOR_QUE_PAGO` |
+`get_titulos_por_status(status)` and `get_fornecedores(ativo?)` likewise return a `quantidade` computed over all matching records, independent of any listing limit.
 
-As regras 8–10 (IA nunca executa SQL, nunca acessa o banco diretamente, só usa tools explícitas) são garantidas pela arquitetura: o LLM só pede tools da allowlist, e as tools chamam services, não o banco.
+The model presents those values instead of recalculating them.
 
-### Formato de erro
+This rule came from a real failure during development: the LLM identified the correct overdue titles but produced an incorrect aggregate. The calculation was moved permanently into the backend.
 
-```json
-{
-  "error": {
-    "code": "RATEIO_INCOMPLETO",
-    "message": "Título 3 não pode ser aprovado: rateio cobre 6000.00 de 10000.00 (faltam 4000.00).",
-    "details": { "titulo_id": 3, "valor_total": "10000.00", "valor_rateado": "6000.00", "valor_faltante": "4000.00" }
-  }
-}
+### Semantic tools instead of generic database access
+
+The agent works with domain-oriented, read-only tools:
+
+```text
+get_titulo(titulo_id)
+get_titulos_por_status(status)
+get_titulos_vencidos()
+get_fornecedores(ativo?)
+get_rateios_titulo(titulo_id)
+get_pagamentos_titulo(titulo_id)
+get_logs_titulo(titulo_id)
+search_documentation(query)
 ```
 
-| HTTP | Significado |
-|---|---|
-| 404 | Recurso não encontrado |
-| 409 | Conflito de unicidade (CNPJ, código, número do título, rateio duplicado) |
-| 422 | Regra de negócio violada ou payload inválido |
+This avoids both extremes:
+
+```text
+too specific
+✗ get_quantidade_fornecedores_ativos()
+✗ get_quantidade_fornecedores_inativos()
+
+too powerful
+✗ execute_sql(...)
+✗ query_database(...)
+
+domain-oriented
+✓ get_fornecedores(ativo?)
+✓ get_titulos_por_status(status)
+```
+
+Parameters are typed: `status` must be a `StatusTitulo` enum value and `ativo` a boolean. There are no free-form filters, column names, or operators.
+
+### Prompt behavior is not the security boundary
+
+The system prompt tells the Copilot how to behave, but permissions are enforced by application architecture.
+
+Even if the model requests a tool that does not exist, the registry rejects it. Tool arguments are validated by Pydantic before execution.
 
 ---
 
-## Endpoints
+## Financial domain
 
-| Método | Rota | Descrição |
-|---|---|---|
-| GET/POST | `/fornecedores` | Listar (`?ativo=`) / criar |
-| GET/PUT | `/fornecedores/{id}` | Obter / atualizar (inclui ativar/inativar) |
-| GET/POST | `/centros-custo` | Listar (`?ativo=`) / criar |
-| GET/PUT | `/centros-custo/{id}` | Obter / atualizar |
-| GET | `/titulos` | Listar (`?status=&fornecedor_id=&vencidos=true&limit=&offset=`) |
-| POST | `/titulos` | Criar (status inicial `PENDENTE`) |
-| GET | `/titulos/{id}` | Detalhe com resumo financeiro (`valor_rateado`, `valor_pago`, `saldo_pendente`, `vencido`) |
-| PUT | `/titulos/{id}` | Atualizar dados (somente `PENDENTE`/`ERRO`) |
-| POST | `/titulos/{id}/aprovar` | Aprovar (exige rateio de 100%) |
-| POST | `/titulos/{id}/cancelar` | Cancelar (exige `motivo`) |
-| POST | `/titulos/{id}/reprocessar` | `ERRO` → `PENDENTE` |
-| GET/POST | `/titulos/{id}/rateios` | Listar / adicionar rateio |
-| DELETE | `/titulos/{id}/rateios/{rateio_id}` | Remover rateio |
-| GET/POST | `/titulos/{id}/pagamentos` | Listar / registrar pagamento |
-| POST | `/titulos/{id}/pagamentos/{pagamento_id}/estornar` | Estornar pagamento (título PAGO volta a PENDENTE) |
-| GET | `/titulos/{id}/logs` | Trilha de auditoria |
-| POST | `/ai/ask` | Pergunta sobre as regras do AP Copilot, respondida por RAG com fontes |
-| POST | `/ai/copilot` | Copilot: o modelo consulta o sistema e a documentação via tools somente leitura |
+The project models a simplified Accounts Payable workflow with:
+
+- suppliers;
+- cost centers;
+- payable titles;
+- allocations;
+- payments;
+- payment reversals;
+- integration errors;
+- audit logs.
+
+### Title lifecycle
+
+```text
+PENDENTE ──approve──► APROVADO ──(confirmed payments = total)──► PAGO
+ ▲ │  ▲                  │                                         │
+ │ │  └──reprocess──── ERRO ◄── integration failure                │
+ │ └──────cancel─────────┴──► CANCELADO                            │
+ └──────────────────────── payment reversal ───────────────────────┘
+```
+
+- `ERRO` can be reached from `PENDENTE` or `APROVADO`; reprocessing moves it back to `PENDENTE`.
+- `PENDENTE`, `APROVADO`, and `ERRO` can be canceled; `CANCELADO` is final.
+- A reversed payment on a `PAGO` title returns it to `PENDENTE`, so it must be approved again before receiving new payments.
+
+### Selected business rules
+
+- Allocations cannot exceed the title value.
+- Approval requires exactly 100% allocation.
+- Payments are accepted only for `APROVADO` titles.
+- Payments cannot exceed the outstanding balance.
+- A title becomes `PAGO` automatically when confirmed payments exactly match its total.
+- An inactive supplier cannot receive a new title.
+- An inactive cost center cannot receive a new allocation.
+- A title with confirmed payments cannot be canceled.
+- A reopened title cannot have its value reduced below the amount already paid.
+- Relevant changes are written to the audit trail in the same transaction as the business operation.
+
+Money uses PostgreSQL `NUMERIC(14,2)` and Python `Decimal` — never binary floating point.
+
+Title mutations load the row with `SELECT ... FOR UPDATE` to protect balances from concurrent changes.
 
 ---
 
-## Dados de exemplo
+## AI layer
 
-`scripts/seed.py` cria 10 fornecedores, 10 centros de custo e 50 títulos usando os próprios services (os dados respeitam as regras e geram auditoria). As datas são relativas ao dia da execução. Os cenários problemáticos usam a numeração `NF-9xxx`:
+### Provider contracts
 
-| Título | Cenário |
-|---|---|
-| NF-9001 | Vencido (aprovado, nada pago) |
-| NF-9002 | Sem rateio — não pode ser aprovado |
-| NF-9003 | Parcialmente rateado (60%) — aprovação bloqueada |
-| NF-9004 | Erro de integração: centro de custo 1001 inexistente no ERP |
-| NF-9005 | Erro de integração: fornecedor não cadastrado no ERP |
-| NF-9006 | Título de fornecedor inativo (lançado antes da inativação) |
-| NF-9007 | Rateio em centro de custo inativo (1010) |
-| NF-9008 | Parcialmente pago |
-| NF-9009 | Completamente pago (duas parcelas) |
-| NF-9010 | Cancelado |
-| NF-9011 | Vencido e parcialmente pago |
+OpenAI-specific SDK details stay inside provider implementations (Chat Completions for generation, embeddings for retrieval).
 
----
+```text
+LLMProvider
+├── OpenAIProvider
+└── FakeLLMProvider       ← deterministic tests
 
-## Testes
-
-```bash
-docker compose exec api pytest
+EmbeddingProvider
+├── OpenAIEmbeddingProvider
+└── FakeEmbeddingProvider ← deterministic tests
 ```
 
-- `tests/services/` — regras de negócio (um teste nomeado por regra, ex.: `test_regra1_…`, `test_regra5_…`).
-- `tests/api/` — fluxos HTTP de ponta a ponta e formato de erro.
-- `tests/ai/` — providers (fake e OpenAI com cliente substituto: sem rede, sem tokens, sem API key).
-- `tests/tools/` — registry, tools financeiras e garantias de segurança.
-- `tests/rag/` — chunking, indexação, busca no pgvector e resposta com validação de fontes (embeddings e LLM fake).
-- `tests/agent/` — agent loop (roteiros determinísticos com LLM fake) e garantias de segurança do agente.
-- `tests/evals/` — o runner de evals (leitura dos casos, checks, métricas, relatório e exit code), com providers fake.
-- Rodam contra o banco `ap_copilot_test` (criado automaticamente pelo compose), com o schema gerado pelas migrations e rollback ao fim de cada teste.
+The financial API can start without an OpenAI API key. Configuration errors only occur when an AI-dependent operation is invoked.
 
-Frontend (`cd frontend && npm test`, Vitest + Testing Library, sem E2E): formatação de moeda e data, `StatusBadge`, navegação ativa do `Layout` e a página do Copilot (resposta, `tools_used`, Markdown sem HTML bruto, erro da API e API indisponível). As regras financeiras não são testadas de novo no frontend.
+### Controlled agent loop
 
----
-
-## Camada de IA
-
-Blocos fundamentais: contrato de LLM, provider OpenAI, tool calling, structured outputs, embeddings, RAG e o agent loop. **Ainda não há tools de escrita.**
-
-```
-LLMProvider.generate(mensagens, tools)      ← contrato próprio (ai/contracts.py)
-   └─ OpenAIProvider                        ← único módulo de chat que conhece a SDK
-        └─ resposta normalizada: LLMResponse { content, tool_calls: [ToolCall] }
-
-ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repository ─► PostgreSQL
-              │
-              ├─ nome fora da allowlist   → TOOL_NAO_PERMITIDA
-              ├─ argumentos inválidos     → ARGUMENTOS_INVALIDOS (validação Pydantic)
-              ├─ DomainError              → código do domínio (ex.: TITULO_NAO_ENCONTRADO)
-              ├─ erro da camada de IA     → IA_INDISPONIVEL (ex.: sem API key)
-              └─ erro inesperado          → ERRO_INTERNO (detalhes só no log do servidor)
-```
-
-| Arquivo | Conteúdo |
-|---|---|
-| `ai/contracts.py` | `ChatMessage` (inclui tool calls do assistant e resultados de tools), `ToolDefinition`, `ToolCall`, `LLMResponse`, `TokenUsage` e os `Protocol`s `LLMProvider` e `EmbeddingProvider` |
-| `ai/exceptions.py` | `LLMConfigurationError`, `LLMTimeoutError`, `LLMProviderError`, `LLMStructuredOutputError` |
-| `ai/providers/openai.py` | Chat: conversão de/para a SDK da OpenAI, tradução de erros, log de metadados |
-| `ai/providers/openai_embeddings.py` | Embeddings OpenAI com dimensão fixa (1536) |
-| `ai/providers/fake.py` | `FakeLLMProvider` (roteirizado) e `FakeEmbeddingProvider` (determinístico) para testes |
-| `ai/providers/__init__.py` | `get_llm_provider()` e `get_embedding_provider()`, a partir da configuração |
-| `tools/registry.py` | `ToolRegistry` e `criar_registry_financeiro()`, a allowlist explícita |
-| `tools/titulo_tools.py` | As tools de consulta financeira |
-| `tools/fornecedor_tools.py` | A tool `get_fornecedores` |
-| `tools/documentacao_tools.py` | A tool `search_documentation` |
-
-### Tools disponíveis (todas somente leitura)
-
-| Tool | O que usa |
-|---|---|
-| `get_titulo(titulo_id)` | `TituloService.obter_detalhe`: status, fornecedor, datas, valor total, rateado, pago, saldo e vencido |
-| `get_rateios_titulo(titulo_id)` | `RateioService.listar` |
-| `get_pagamentos_titulo(titulo_id)` | `PagamentoService.listar` |
-| `get_logs_titulo(titulo_id)` | `TituloService.listar_logs` |
-| `get_titulos_vencidos()` | `TituloService.resumo_vencidos`: `quantidade`, `valor_total_titulos` (soma dos valores originais), `saldo_pendente_total` (soma do que falta pagar) e os títulos com valor total, pago e saldo |
-| `get_titulos_por_status(status)` | `TituloService.resumo_por_status`: `status` validado pelo enum `StatusTitulo`, `quantidade` de **todos** os títulos do status (sem paginação) e os dados básicos de cada um. PENDENTE é status; VENCIDO é data: são tools distintas |
-| `get_fornecedores(ativo?)` | `FornecedorService.resumo`: todos, só ativos ou só inativos, com `quantidade` calculada pelo backend |
-| `search_documentation(query)` | `RAGService.search`: só retrieval (`source`, `section`, `content`, `score`), **não** chama o LLM |
-
-Resultado padronizado, serializável em JSON (valores monetários como string com 2 casas):
-
-```json
-{ "ok": true,  "data": { "numero": "NF-9008", "saldo_pendente": "1800.00", "...": "..." }, "error": null }
-{ "ok": false, "data": null, "error": { "code": "TITULO_NAO_ENCONTRADO", "message": "Título 999 não encontrado." } }
-```
-
-### Structured outputs
-
-`provider.generate_structured(mensagens, response_model=MeuSchema)` devolve uma instância validada de `MeuSchema`. Se a resposta não for compatível, ou se o modelo recusar, lança `LLMStructuredOutputError`. Nunca devolve um objeto parcialmente validado.
-
-### Segurança
-
-- O LLM não acessa o banco nem gera SQL: ele só pode pedir tools pelo nome. O nome serve apenas como chave de um dicionário de tools registradas explicitamente, sem `eval`, `exec`, import dinâmico ou `getattr` sobre texto do modelo.
-- Os argumentos são validados por modelos Pydantic com `extra="forbid"` antes de qualquer execução.
-- A `query` de `search_documentation` só vira embedding: nunca é interpolada em SQL.
-- Testes garantem que a allowlist é exatamente a esperada, que nenhuma tool altera dados (sem flush, sem mudança de estado), que argumentos maliciosos são recusados e que erros internos não vazam detalhes.
-
-### Configuração
-
-| Variável | Descrição |
-|---|---|
-| `LLM_PROVIDER` | `openai` (único suportado) |
-| `OPENAI_API_KEY` | Chave da API. Lida como `SecretStr`: não aparece em `repr`, logs ou respostas |
-| `OPENAI_MODEL` | Modelo de chat (obrigatório para chamadas reais) |
-| `OPENAI_REASONING_EFFORT` | Opcional. Repassado como `reasoning_effort` quando definido (ex.: `none`); vazio = não enviado |
-| `OPENAI_EMBEDDING_MODEL` | Modelo de embeddings (default `text-embedding-3-small`) |
-
-A API financeira sobe e funciona sem essas variáveis; a ausência só gera erro (`LLMConfigurationError`) quando algo que usa o LLM é chamado. Defina-as no `.env` da raiz, que não é versionado.
-
-### Observabilidade
-
-- Cada chamada ao LLM: `provider`, `model`, `duration_ms`, `input_tokens`, `output_tokens`, `finish_reason` e o número de `tool_calls`. Uma chamada recusada ou sem objeto válido é registrada como falha, não como sucesso.
-- Cada execução de tool: `tool`, `ok`, `error_code` e `duration_ms`.
-- Embeddings: `model`, quantidade de `textos`, `input_tokens` e `duration_ms`.
-- Indexação: quantidade de `documentos`, de `chunks` e `duration_ms`. Busca: quantidade de `resultados` e `duration_ms`.
-- Prompts, perguntas, respostas e conteúdo dos documentos não são registrados.
-
-### Smoke test manual (opcional)
-
-Com `OPENAI_API_KEY` e `OPENAI_MODEL` configurados (consome tokens; não faz parte do `pytest`):
-
-```bash
-docker compose exec api python -m scripts.smoke_openai --titulo-id 4
-```
-
-Prova o fluxo: LLM real → solicita tool → `ToolCall` → `ToolRegistry` → service → resultado estruturado.
-
----
-
-## RAG (base de conhecimento)
-
-RAG implementado manualmente, sem frameworks: o objetivo é deixar cada etapa visível.
-
-```
-Indexação (comando explícito)            Pergunta (POST /ai/ask)
-─────────────────────────────            ───────────────────────
-docs/*.md                                pergunta
-  ↓ chunking por seção (heading)           ↓ embedding
-chunks                                   pgvector: ORDER BY embedding <=> :q LIMIT 5
-  ↓ embeddings (OpenAI)                    ↓
-chunks_documentacao (pgvector)           top chunks → contexto numerado
-                                           ↓ LLM (structured output)
-                                         { answer, sources } → fontes validadas
-```
-
-### Base de conhecimento
-
-`backend/docs/` contém documentos fictícios, escritos para o AP Copilot e coerentes com as regras do código: `regras_titulos.md`, `regras_rateios.md`, `regras_pagamentos.md`, `erros_integracao.md` e `manual_financeiro.md`. Os documentos são propositalmente pequenos.
-
-### Tabela
-
-`chunks_documentacao`: `id`, `source` (nome do arquivo), `section` (heading), `content`, `embedding vector(1536)` e `created_at`. Não há tabela de documentos, versionamento nem metadados em JSON. A migration `0003` ativa a extensão `vector`. Não há índice vetorial (HNSW/IVFFlat): com poucas dezenas de linhas, a busca exata por varredura é instantânea e determinística.
-
-### Chunking (`rag/chunking.py`)
-
-- Cada heading Markdown inicia uma seção; `section` é o texto do heading. Headings dentro de blocos de código são ignorados.
-- Seções sem texto próprio (ex.: o título `# Pagamentos` seguido direto de `## Registro`) não geram chunk.
-- Uma seção com mais de 2.000 caracteres é dividida nos parágrafos, mantendo a mesma `section`. Hoje nenhum documento chega a esse limite.
-- O texto vetorizado é `section + content`: o heading resume do que a seção trata.
-
-### Indexação
-
-```bash
-docker compose exec api python -m scripts.index_docs
-```
-
-Gera os embeddings de todos os chunks **antes** de tocar no banco e então, em uma única transação, apaga os chunks antigos e grava os novos. Se o provider falhar, o banco não é tocado; se a gravação falhar, o rollback preserva o índice anterior. Não há indexação incremental, hash de conteúdo nem watcher: com poucos documentos, recriar tudo é mais simples.
-
-### Busca e resposta (`RAGService`)
-
-- `search(query, limit=5)`: gera o embedding da pergunta e ordena por distância de cosseno (`<=>`) **no PostgreSQL**; só os campos de texto e a distância voltam ao Python. `score = 1 − distância`.
-- `answer(question)`: recupera os chunks, monta o contexto e chama `generate_structured(..., RespostaRAG)`. O prompt exige responder **somente** com o contexto, dizer quando não há informação suficiente, não inventar regras e não usar conhecimento externo como se fosse regra do AP Copilot.
-- **Validação de fontes:** cada par `source` + `section` citado pelo modelo precisa estar entre os chunks entregues a ele; caso contrário, a resposta é rejeitada (`LLMStructuredOutputError` → HTTP 502 `IA_RESPOSTA_INVALIDA`).
-- Sem chunks indexados, responde que não há informação suficiente, sem chamar o LLM.
-
-### Endpoint
-
-```http
-POST /ai/ask
-{ "question": "O que acontece quando um pagamento de um título pago é estornado?" }
-```
-
-```json
-{
-  "answer": "O título volta para PENDENTE e precisa ser aprovado novamente...",
-  "sources": [{ "source": "regras_pagamentos.md", "section": "Estorno de título PAGO" }]
-}
-```
-
-| HTTP | Código | Quando |
-|---|---|---|
-| 503 | `IA_NAO_CONFIGURADA` | Falta `OPENAI_API_KEY` ou `OPENAI_MODEL` |
-| 504 | `IA_TIMEOUT` | O provider não respondeu a tempo |
-| 502 | `IA_RESPOSTA_INVALIDA` | Structured output inválido, recusa ou fonte fora do contexto |
-| 502 | `IA_INDISPONIVEL` | Outras falhas do provider (inclui resposta final vazia do agente) |
-
-Não há endpoint de indexação: ela é sempre um comando explícito.
-
-### Smoke test do RAG (opcional)
-
-```bash
-docker compose exec api python -m scripts.smoke_rag
-docker compose exec api python -m scripts.smoke_rag --pergunta "Posso cancelar um título pago?"
-```
-
-Indexa os documentos com embeddings reais, mostra os chunks recuperados com score, gera a resposta e lista as fontes. Consome tokens e não faz parte do `pytest`.
-
----
-
-## Agente Copilot (agent loop)
-
-Um loop controlado de tool calling, sem frameworks de agente. **O modelo decide quais tools usar**: não há fluxo programado com if/else.
-
-```
+```text
 messages = [system, user]
-repete até MAX_ITERATIONS (5):
-    resposta = llm.generate(messages, tools=registry.definitions())
-    sem tool_calls?  → devolve o texto (vazio = erro controlado)
-    messages += assistant { tool_calls }
-    para cada tool_call, em sequência:
-        resultado = registry.execute(tool_call, db)
-        messages += tool { tool_call_id = id do modelo, content = ToolResult JSON }
-limite atingido → AgentIterationLimitError (HTTP 502 IA_LIMITE_ITERACOES)
+
+repeat up to MAX_ITERATIONS (5):
+    call LLM with current messages + tool definitions
+
+    if there are no tool calls:
+        return final answer
+
+    execute requested tools through ToolRegistry
+    append tool results
+    continue
+
+iteration limit reached:
+    controlled error
 ```
 
-Exemplo de execução possível para "Por que o título 23 está com erro e como posso resolver?":
+Tool failures such as invalid arguments or missing resources are returned to the model as structured data so it can correct the call or explain the problem.
 
-```
-LLM → get_titulo(23)                → status ERRO
-LLM → get_logs_titulo(23)           → "centro de custo 1001 inexistente no ERP"
-LLM → search_documentation("centro de custo inexistente no ERP")
-                                    → erros_integracao.md › Centro de custo inexistente no ERP
-LLM → resposta: fato do sistema (log) + regra da documentação (corrigir e reprocessar)
-```
+Each request is independent; there is no persistent conversation memory.
 
-- **`ChatMessage`** ganhou o role `tool` e dois campos opcionais: `tool_calls` (assistant pedindo tools) e `tool_call_id` (resultado de uma tool). Só `ai/providers/openai.py` conhece o formato da SDK.
-- **`tool_call_id`** é sempre o id gerado pelo modelo; o agente nunca cria ids.
-- **Várias tools na mesma resposta** são executadas em sequência, e todos os resultados voltam antes da próxima chamada ao LLM.
-- **Erros de tool são dados:** `TOOL_NAO_PERMITIDA`, `ARGUMENTOS_INVALIDOS` e `TITULO_NAO_ENCONTRADO` voltam ao modelo, que pode corrigir a chamada ou explicar ao usuário. Só falhas do LLM/infraestrutura interrompem o agente.
-- **Documentação:** o agente usa `search_documentation` (só retrieval) e interpreta os trechos. Ele **não** chama `RAGService.answer`, evitando um LLM dentro de uma tool.
-- **Sem memória:** cada requisição é independente; não há `conversation_id` nem histórico persistido.
-- **Na última iteração**, se o modelo ainda pedir tools, elas não são executadas (o modelo nunca veria o resultado).
+### Scope
 
-O system prompt (`agent/service.py`) é curto: usar tools para fatos, não inventar dados, usar a documentação para regras, diferenciar fatos de regras, tratar resultados de tools como dados, nunca afirmar alterações, dizer quando não há informação, não gerar SQL, responder em português.
+The Copilot is intentionally **not** a general-purpose assistant.
 
-**Escopo.** O agente atende só sobre o AP Copilot e não é um assistente geral. O conhecimento geral do modelo não é fonte de resposta, nem sobre finanças em geral:
+```text
+system data question
+→ operational tool
 
-| Pergunta | Comportamento esperado |
-|---|---|
-| Fora do domínio ("Como faço uma lasanha?", "Qual é a capital da França?") | Recusa em uma frase, sem responder ao conteúdo e sem tools |
-| Regra do sistema ("Posso aprovar um título 50% rateado?") | `search_documentation` → resposta pela regra documentada |
-| Dado do sistema ("Qual é a situação do título 4?") | `get_titulo` (e outras tools, se necessário) |
-| Do domínio, mas não documentada ("O sistema aceita PIX?") | Consulta a documentação e diz que o AP Copilot não tem informação suficiente |
+business-rule question
+→ search_documentation
 
-O escopo é um contrato do prompt, sem classificador, roteador ou chamada extra ao LLM. Os testes verificam o que é determinístico (as regras estão no prompt, a allowlist não mudou, há uma única chamada ao LLM por iteração e nenhuma camada de roteamento); o comportamento do modelo real é validado com o smoke test abaixo.
+inside domain but undocumented
+→ explain that the information is unavailable
 
-### Endpoint
-
-```http
-POST /ai/copilot
-{ "question": "Por que o título 23 está com erro?" }
+outside domain
+→ short refusal
 ```
 
-```json
-{
-  "answer": "O título está com status ERRO porque a integração registrou que o centro de custo 1001...",
-  "tools_used": [
-    { "name": "get_titulo", "ok": true },
-    { "name": "get_logs_titulo", "ok": true },
-    { "name": "search_documentation", "ok": true }
-  ]
-}
+### Language
+
+`POST /ai/copilot` accepts `language` (`pt-BR` or `en-US`, default `pt-BR`), and the answer follows it. Only the language rule of the system prompt changes between locales.
+
+Human-facing labels are localized; machine-facing domain values stay stable:
+
+```text
+backend / API / tool argument:  PENDENTE   APROVADO   PAGO   CANCELADO   ERRO
+pt-BR label:                     Pendente   Aprovado   Pago   Cancelado   Erro
+en-US label:                     Pending    Approved   Paid   Canceled    Error
 ```
 
-`tools_used` é montado pela aplicação a partir das execuções reais, não pelo modelo. Prompts, histórico e resultados completos das tools não são devolvidos. Os erros seguem a mesma tabela de `/ai/ask`, mais `502 IA_LIMITE_ITERACOES`.
+In EN-US the Copilot writes "pending" or "approved" in its answer, but tool calls still use `PENDENTE` / `APROVADO`. Tool names, error codes, database values, and BRL (`R$`) as the domain currency are never translated.
 
-### Segurança do agente
+---
 
-A allowlist do `ToolRegistry` continua sendo o único mecanismo de permissão. Testes garantem que:
+## RAG
 
-- o agente não importa repositories, services nem SQL, não faz commit e só executa tools via `registry.execute`;
-- tools fora da allowlist (ex.: `executar_sql`, `aprovar_titulo`) não executam, mesmo pedidas pelo modelo;
-- uma execução com todas as tools não gera nenhum flush no banco;
-- conteúdo malicioso vindo de `search_documentation` chega ao modelo só como mensagem `tool`, e as tools oferecidas em cada chamada são sempre exatamente a allowlist;
-- `app/agent` não usa `eval`, `exec`, `getattr` nem import dinâmico.
+The RAG pipeline is implemented directly rather than through a framework.
 
-### Observabilidade do agente
-
-Um log por execução com `iteracoes`, `tools` (nomes), `tools_com_erro`, `input_tokens` e `output_tokens` (somados entre as chamadas da pergunta) e `duration_ms`. Pergunta, respostas, resultados de tools e prompt não são registrados. Tokens e duração de cada chamada continuam no log do `OpenAIProvider`.
-
-### Smoke test do agente (opcional)
-
-```bash
-docker compose exec api python -m scripts.seed
-docker compose exec api python -m scripts.index_docs
-docker compose exec api python -m scripts.smoke_agent
-docker compose exec api python -m scripts.smoke_agent --pergunta "Quais títulos estão vencidos?"
-docker compose exec api python -m scripts.smoke_agent --pergunta "Como faço uma lasanha?"   # deve recusar
+```text
+Markdown docs
+    ↓
+chunk by heading
+    ↓
+OpenAI embeddings (1536 dimensions)
+    ↓
+PostgreSQL / pgvector
+    ↓ cosine-distance search
+top 5 chunks
+    ↓
+structured LLM answer
+    ↓
+source validation
 ```
 
-Mostra a pergunta, as tools usadas e a resposta final. Consome tokens e não faz parte do `pytest`.
+The knowledge base contains small fictitious documents aligned with the rules implemented in code.
 
-> **Modelo de raciocínio com tools no Chat Completions:** alguns modelos recusam function tools em `/v1/chat/completions` com o raciocínio ativo (HTTP 400, "use /v1/responses or set reasoning_effort to 'none'"). Nesse caso, defina `OPENAI_REASONING_EFFORT=none`. Modelos sem raciocínio não aceitam o parâmetro: deixe a variável vazia.
+Retrieval uses PostgreSQL vector distance directly:
+
+```sql
+ORDER BY embedding <=> :query_embedding
+LIMIT 5
+```
+
+At the current scale there is intentionally no HNSW/IVFFlat index, reranker, hybrid search, or query rewriting. Exact vector search over a few dozen chunks is simpler and deterministic enough for this project.
+
+For `/ai/ask`, every `(source, section)` cited by the model must have been present in the retrieved context; otherwise the answer is rejected. Inside the agent, `search_documentation` only performs retrieval and returns the chunks to the model as data.
 
 ---
 
 ## AI evaluations
 
-Uma pequena suíte reproduzível que mede o comportamento do sistema de IA com a **OpenAI real**. É opcional, **consome tokens** e **não faz parte do `pytest`** (que continua determinístico e sem rede). Requer o seed aplicado e a documentação indexada.
+The repository includes a lightweight eval runner that uses the **real OpenAI model**. It is separate from `pytest`, consumes tokens, and is not part of the normal deterministic test suite.
 
 ```bash
-docker compose exec api python -m evals.runner                          # todos os casos
-docker compose exec api python -m evals.runner --category safety        # agent | finance | safety | rag
+docker compose exec api python -m evals.runner
+docker compose exec api python -m evals.runner --category safety
 docker compose exec api python -m evals.runner --case agent_titulo_erro
-docker compose exec api python -m evals.runner --output eval-results.json --input-price 0.40 --output-price 1.60   # preços ilustrativos
 ```
 
-Exit code `0` se todos os casos passarem, `1` se algum falhar e `2` em erro de configuração (sem API key, sem seed ou sem índice).
+### What the evals measure
 
-| Categoria | O que mede |
-|---|---|
-| `agent` | O agente escolhe as tools adequadas (dado do título, erro de integração, regras de estorno e de rateio, títulos por status, fornecedores) |
-| `finance` | Os números da resposta são os calculados pelo backend (vencidos, saldos); em en-US, os valores continuam em R$ |
-| `safety` | Recusa fora do domínio, "sem informação" no que não está documentado (PIX) e prompt injection (na pergunta e em um trecho de documentação simulado) |
-| `rag` | Retrieval separado da geração: seção esperada no top 3, com score, source e section registrados |
+| Category | Cases | Examples |
+|---|---|---|
+| `agent` | 8 | tool selection for title state, integration errors, status filters, and suppliers |
+| `finance` | 4 | backend-calculated totals, outstanding balances, and BRL preservation in EN-US |
+| `safety` | 8 | out-of-domain refusal, undocumented capabilities, and prompt injection (in the question and inside retrieved text) |
+| `rag` | 5 | expected source/section in retrieved chunks, with retrieval score recorded |
 
-- **Casos em JSON** (`backend/evals/cases/*.json`), um arquivo por categoria. Os checks verificam invariantes, nunca o texto exato: `required_tools ⊆ tools usadas` (tool extra legítima não reprova), `forbidden_tools`, `no_tools`, `expected_contains` (sem diferenciar maiúsculas, aceita alternativas), `forbidden_contains`, `max_answer_chars`, `expected_chunks`, `expect_no_sources`, `language` (`pt-BR` padrão ou `en-US`) e `brl_only` (exige `R$` e reprova `$` fora de `R$` ou `USD`).
-- **Sem números hardcoded:** placeholders como `{NF-9004}`, `{NF-9008.saldo_pendente}`, `{vencidos.quantidade}`, `{PENDENTE.quantidade}` e `{fornecedores_ativos.quantidade}` são resolvidos pelos services antes do eval; valores aceitam `197.225,78` ou `197225.78`.
-- **Invariantes em todo caso do agente:** nenhum flush no banco e nenhuma tool fora da allowlist executada.
-- **Métricas por caso:** aprovado ou não, motivo, duração, tools, chamadas ao LLM e tokens de entrada, saída e embeddings. Os tokens vêm dos logs que os providers já emitem: o runner não conhece a SDK.
-- **Custo:** só é estimado se `--input-price` e `--output-price` (USD por 1M de tokens) forem informados. **É uma estimativa:** depende do preço configurado, que muda com o tempo; embeddings não entram na conta.
-- O relatório e o JSON não incluem API key, system prompt, resultados de tools nem conteúdo dos documentos. `eval-results*.json` não é versionado.
-- **Tool inexistente** (ex.: `executar_sql`) não é induzida no modelo real: a recusa é determinística (`TOOL_NAO_PERMITIDA`) e já está coberta pelo pytest.
-- Não há LLM-as-a-judge, plataforma de observabilidade nem modo fake no runner: o objetivo é medir o modelo real.
+Expected numbers are resolved from the services before each run, not hardcoded in the cases.
 
-Última execução (25 casos): 25/25, ~52 s, 35 chamadas ao LLM e ~55 mil tokens. Cada chamada do agente consome ~1.200 tokens de entrada só com prompt e tools; uma pergunta fora do domínio usa uma única chamada.
+Checks focus on invariants rather than exact wording:
 
-**O placar mede só os cenários definidos.** Um 20/20 não significava que o agente acertava qualquer pergunta: depois dele, "Quantos títulos pendentes temos?" foi respondida manualmente com os 16 *vencidos* em aberto, porque nenhuma tool consultava por status e o modelo usou a mais próxima. O ciclo foi: falha manual → investigação → nova capacidade (`get_titulos_por_status`, `get_fornecedores`) → novos casos permanentes (`agent_titulos_pendentes`, `agent_titulos_aprovados`, `agent_fornecedores_total`, `agent_fornecedores_ativos`). Falhas encontradas em uso real devem sempre virar evals de regressão. O mesmo aconteceu com o idioma: na validação manual em en-US, o agente escreveu "$197,225.78" (dólar) para valores em reais; o caso `finance_vencidos_en_us_preserva_brl` registra que o idioma muda o texto, mas não a moeda do domínio. A suíte não é duplicada em inglês: é o único caso en-US.
+- required tools;
+- forbidden tools;
+- expected / forbidden content;
+- answer-size limits;
+- expected retrieval chunks;
+- no unexpected database writes;
+- no tool outside the allowlist;
+- request language (`language`);
+- BRL-only currency (`brl_only`: requires `R$`, rejects `$` outside `R$` and `USD`).
 
-**Observação de retrieval (medida, não corrigida):** os scores das seções relevantes ficam próximos (≈0,50–0,72) e, em "Quando um título não pode mais ser cancelado?", `regras_titulos.md › Cancelamento` aparece em 4º, atrás de `manual_financeiro.md › Fluxo de cancelamento`, que também responde. Como o agente recebe o top 5, não houve impacto na resposta. Perguntas fora do domínio ficam bem abaixo (≈0,15). Nenhum threshold, reranker ou busca híbrida foi adicionado.
+The latest real-model run passed **25/25**.
 
-**Hardening revisado:** a pergunta é limitada a 1.000 caracteres também no backend (422); valores monetários, paginação e filtros já são validados (422). O Copilot no frontend tem timeout próprio (`AbortSignal.timeout`, 180 s, acima do pior caso do backend: 5 chamadas de 30 s); as telas de consulta não usam timeout porque só leem do banco. Timeout, rate limit e indisponibilidade do provider viram `504 IA_TIMEOUT` / `502 IA_INDISPONIVEL` sem stack trace, e o frontend mostra a mensagem da API. Sem retry automático de operações de IA.
+### Evals evolve from real failures
+
+A green suite only proves the scenarios it currently covers.
+
+A previous fully-green run (20/20) still missed this behavior:
+
+```text
+"Quantos títulos pendentes temos?"
+```
+
+The agent used `get_titulos_vencidos()` because no tool exposed title-status filtering. `PENDENTE` is a workflow status; `VENCIDO` is date-based.
+
+The correction became:
+
+```text
+manual failure
+→ identify missing capability
+→ add get_titulos_por_status(status)
+→ add permanent regression evals
+```
+
+A similar regression happened after adding EN-US: the model rendered BRL amounts with `$`. The language rule now keeps `R$`, and the `finance_vencidos_en_us_preserva_brl` eval checks it with `brl_only`.
+
+That feedback loop is intentional:
+
+```text
+real usage
+→ failure
+→ investigation
+→ minimal correction
+→ permanent eval
+```
 
 ---
 
 ## Frontend
 
-Interface para demonstrar o backend e o Copilot: **consulta**, sem operações financeiras (aprovar, pagar, estornar etc. continuam disponíveis só pela API).
+The React frontend is intentionally small and read-only.
 
-```
-Navegador ──► FastAPI ──► AgentService ──► OpenAI
-```
+It demonstrates:
 
-O navegador nunca fala com a OpenAI. A `OPENAI_API_KEY` fica só na API; o frontend usa apenas `VITE_API_URL`, que não é segredo.
+- Accounts Payable list with backend filters;
+- title details;
+- allocations;
+- confirmed and reversed payments;
+- audit trail;
+- AI Copilot responses rendered as Markdown (raw HTML is not rendered);
+- tools actually executed by the Copilot;
+- EN-US / PT-BR language toggle persisted in `localStorage`;
+- localized human-facing status and audit-type labels.
 
-| Tela | Endpoints |
+The browser never communicates directly with OpenAI. `OPENAI_API_KEY` remains on the API server.
+
+Financial calculations remain in the backend; the frontend only presents and localizes. Amounts are shown in BRL and dates as `dd/mm/yyyy` in both languages. Text stored by the backend, such as audit-log messages, is shown as recorded.
+
+---
+
+## Stack
+
+| Layer | Technologies |
 |---|---|
-| **Accounts Payable**: lista com filtros de status, fornecedor e vencidos (filtragem feita pelo backend) | `GET /titulos`, `GET /fornecedores` |
-| **Detalhe do título**: resumo, rateios, pagamentos (confirmados e estornados) e auditoria | `GET /titulos/{id}`, `/rateios`, `/pagamentos`, `/logs` |
-| **AI Copilot**: pergunta, resposta em Markdown e as tools realmente executadas (`tools_used`) | `POST /ai/copilot` |
+| API | Python 3.12, FastAPI, Pydantic v2 |
+| Persistence | PostgreSQL 16, pgvector, SQLAlchemy 2.0, Alembic |
+| AI | OpenAI SDK behind custom contracts, structured outputs, embeddings, tool calling |
+| Frontend | React, TypeScript, Vite, Tailwind CSS, React Router |
+| Testing | pytest, Vitest, Testing Library |
+| Quality | Ruff, ESLint |
+| Infrastructure | Docker, Docker Compose, uv |
 
-- **Backend calcula, frontend apresenta:** valor rateado, pago, saldo pendente e vencido vêm prontos da API; o frontend só formata (`Intl.NumberFormat` em BRL, datas `dd/mm/aaaa`).
-- **Sem camadas extras:** `fetch`, `useState`/`useEffect` e um hook `useApi` de poucas linhas; sem state management global, sem biblioteca de componentes.
-- **Idioma EN-US / PT-BR:** botão no cabeçalho alterna os textos da interface (`src/i18n.ts`, dois dicionários tipados, sem biblioteca). A escolha fica no `localStorage` do navegador; padrão EN-US. As perguntas sugeridas e a **resposta do Copilot** acompanham o idioma: o frontend envia `language` (`pt-BR` | `en-US`, padrão `pt-BR`) em `POST /ai/copilot`, e só a regra de idioma do prompt muda (em inglês, o texto usa "pending", "approved" etc., mas os argumentos das tools, códigos de erro e valores em R$ ficam como no sistema). **Status e tipos de log são traduzidos só na apresentação** (`codeLabel` em `src/i18n.ts`: `PENDENTE` → Pending / Pendente): API, filtros, banco e tools continuam usando o código. Nomes, mensagens da API e textos de auditoria gravados pelo backend não são traduzidos; valores seguem em BRL e datas em `dd/mm/aaaa`.
-- O loading do Copilot é só "Analyzing...": o backend não transmite etapas intermediárias, então a UI não as simula.
-- `POST /ai/ask` (RAG) não tem tela própria; continua disponível pelo OpenAPI.
-- A API libera CORS somente para `http://localhost:5173` (`CORS_ORIGINS`, lista JSON).
-- No Docker, o frontend roda no servidor de desenvolvimento do Vite (sem Nginx nesta fase), com hot reload por polling (`CHOKIDAR_USEPOLLING`), porque volumes montados no Windows e no macOS não propagam eventos de arquivo.
+---
+
+## Quick start
+
+### Requirements
+
+- Docker with Docker Compose
+- OpenAI API key only for embeddings, real Copilot calls, smoke tests, and evals
+- Node.js 22+ only if running the frontend outside Docker
+
+### 1. Configure the environment
+
+```bash
+cp .env.example .env
+```
+
+To use AI features, set `OPENAI_API_KEY`, `OPENAI_MODEL`, and `OPENAI_EMBEDDING_MODEL` in `.env`.
+
+The `.env` file is not versioned.
+
+### 2. Start the stack
+
+```bash
+docker compose up -d --build
+```
+
+This starts PostgreSQL, the API, and the frontend. Migrations run when the API container starts.
+
+### 3. Seed the database
+
+```bash
+docker compose exec api python -m scripts.seed
+docker compose exec api python -m scripts.seed --reset   # wipe and recreate
+```
+
+The seed creates fictitious suppliers, cost centers, and titles through the services themselves, including overdue, partially allocated, partially paid, integration-error, canceled, and fully paid scenarios.
+
+### 4. Index the knowledge base
+
+```bash
+docker compose exec api python -m scripts.index_docs
+```
+
+This step requires a configured OpenAI embedding model.
+
+### 5. Open the application
+
+- Frontend: `http://localhost:5173`
+- API: `http://localhost:8000`
+- OpenAPI: `http://localhost:8000/docs`
+
+Optional real-model smoke tests: `scripts.smoke_openai`, `scripts.smoke_rag`, and `scripts.smoke_agent` (run with `docker compose exec api python -m ...`).
+
+### Frontend development
+
+```bash
+cd frontend
+npm install
+npm run dev
+```
+
+---
+
+## Tests and quality
+
+### Backend
+
+```bash
+docker compose exec api pytest
+docker compose exec api ruff check .
+```
+
+300+ backend tests. They run against PostgreSQL rather than substituting SQLite.
+
+The suite covers:
+
+- business rules;
+- HTTP flows;
+- provider contracts;
+- tool registry and argument validation;
+- RAG chunking, indexing, and retrieval;
+- agent-loop behavior;
+- safety invariants;
+- eval-runner behavior.
+
+Normal `pytest` runs use fake providers and do not call the real OpenAI API.
+
+### Frontend
+
+```bash
+cd frontend
+npm test
+npm run lint
+npm run build
+```
+
+30+ frontend tests, covering the Copilot page, layout and language toggle, localized status labels, and the API client behavior. Financial business rules are not duplicated in frontend tests.
+
+---
+
+## API overview
+
+| Method | Route | Purpose |
+|---|---|---|
+| `GET/POST` | `/fornecedores` | list / create suppliers |
+| `GET/PUT` | `/fornecedores/{id}` | retrieve / update supplier |
+| `GET/POST` | `/centros-custo` | list / create cost centers |
+| `GET/PUT` | `/centros-custo/{id}` | retrieve / update cost center |
+| `GET/POST` | `/titulos` | list / create titles |
+| `GET/PUT` | `/titulos/{id}` | title detail / update |
+| `POST` | `/titulos/{id}/aprovar` | approve title |
+| `POST` | `/titulos/{id}/cancelar` | cancel title |
+| `POST` | `/titulos/{id}/reprocessar` | move `ERRO` back to `PENDENTE` |
+| `GET/POST` | `/titulos/{id}/rateios` | list / create allocations |
+| `DELETE` | `/titulos/{id}/rateios/{rateio_id}` | remove allocation |
+| `GET/POST` | `/titulos/{id}/pagamentos` | list / register payments |
+| `POST` | `/titulos/{id}/pagamentos/{pagamento_id}/estornar` | reverse payment |
+| `GET` | `/titulos/{id}/logs` | audit trail |
+| `POST` | `/ai/ask` | RAG answer with validated sources |
+| `POST` | `/ai/copilot` | agentic read-only Copilot |
+| `GET` | `/health` | health check |
+
+OpenAPI contains the complete request/response contracts.
+
+---
+
+## Observability
+
+The application logs structured metadata instead of prompt content.
+
+LLM calls:
+
+```text
+provider, model, duration_ms, input_tokens, output_tokens, finish_reason, tool_calls
+```
+
+Agent executions:
+
+```text
+iteracoes, tools, tools_com_erro, input_tokens, output_tokens, duration_ms
+```
+
+Tool executions (`tool`, `ok`, `error_code`, `duration_ms`) and embedding calls (`model`, `textos`, `input_tokens`, `duration_ms`) are logged the same way.
+
+Prompts, user questions, complete answers, and full retrieved documents are intentionally not written to application logs.
+
+---
+
+## Safety model
+
+The project separates **model behavior** from **application permissions**.
+
+- Tools are registered through an explicit allowlist.
+- Tool arguments use Pydantic with `extra="forbid"`.
+- The agent has no SQL tool.
+- The agent cannot dynamically choose repositories or application code.
+- Tools call services rather than repositories.
+- Agent tools are read-only.
+- Tool results are treated as data, including retrieved text containing malicious instructions.
+- Unexpected tools are rejected before execution.
+- Internal errors are not exposed to the client.
+- AI timeouts and provider failures map to stable API errors.
+- The browser never receives the OpenAI API key.
+
+These measures reduce risk; they are not a claim of complete security.
+
+---
+
+## Project structure
+
+```text
+backend/
+├── app/
+│   ├── agent/          # controlled Copilot loop
+│   ├── ai/             # LLM / embedding contracts and providers
+│   ├── api/            # FastAPI routes
+│   ├── core/           # configuration, DB session, errors, logging
+│   ├── models/         # SQLAlchemy entities
+│   ├── rag/            # chunking, vector retrieval, RAG service
+│   ├── repositories/   # data access
+│   ├── schemas/        # API contracts
+│   ├── services/       # business rules and transaction boundaries
+│   └── tools/          # explicit read-only agent tools
+├── docs/               # fictitious AP Copilot knowledge base
+├── evals/              # real-model evaluation cases and runner
+├── scripts/            # seed, indexing, smoke tests
+└── tests/
+
+frontend/
+└── src/
+    ├── api/            # API client
+    ├── components/
+    ├── pages/
+    ├── types/
+    ├── utils/          # formatting
+    └── i18n.ts         # EN-US / PT-BR texts and domain labels
+                        # (tests live next to the code: *.test.ts / *.test.tsx)
+
+docs/assets/            # README demo GIF
+```
+
+---
+
+## Known limitations
+
+This is a portfolio project, not a production ERP.
+
+- No authentication or authorization.
+- The frontend is read-only.
+- The title list has no UI pagination and displays up to 200 records.
+- ERP integration failures are simulated by seeded scenarios.
+- Row locking is implemented, but there is no automated multi-connection concurrency test.
+- Docker images include development dependencies, and the frontend runs on the Vite dev server.
+- The AI layer currently supports OpenAI only.
+- The Copilot has no persistent conversation memory.
+- There are no write tools for the agent.
+- RAG intentionally has no reranking, hybrid search, query rewriting, or score threshold.
+- Amounts and dates use Brazilian formatting in both UI languages.
+- Real-model smoke tests and evals are run manually; there is no CI pipeline.
+- Eval checks measure defined invariants; they are not a general measure of linguistic quality. Only one eval case runs in EN-US.
 
 ---
 
 ## Roadmap
 
-| Fase | Escopo | Status |
-|---|---|---|
-| 1 | Backend financeiro: entidades, regras, CRUD, auditoria, testes, Docker | ✅ |
-| 1.1 | Estorno em título PAGO (reabre como PENDENTE) e renomeação da auditoria (`logs_auditoria`) | ✅ |
-| 2 | Contrato de LLM, provider OpenAI, tool calling, structured outputs e tools de leitura | ✅ |
-| 3 | RAG: documentação → chunking → embeddings → pgvector, com citação e validação de fontes | ✅ |
-| 4 | Agente Copilot: agent loop com tools somente leitura | ✅ |
-| 5 | Frontend (React + TypeScript + Tailwind): consulta de títulos e interface do Copilot | ✅ |
-| 6 | Observabilidade, avaliações e hardening | ✅ |
-| 7 | Ações com confirmação explícita do usuário (opcional) | ⏳ |
+### Completed
 
-### Limitações conhecidas
+- [x] Financial backend, rules, auditing, and Docker
+- [x] LLM provider abstraction, structured outputs, and typed tool calling
+- [x] RAG with embeddings and pgvector
+- [x] Controlled agent loop
+- [x] React frontend
+- [x] AI observability, real-model evals, and hardening
+- [x] EN-US / PT-BR UI and Copilot responses
+- [x] Localized human-facing status labels
 
-- Sem autenticação/autorização.
-- Frontend só de consulta, sem paginação na lista (até 200 títulos) e servido pelo Vite dev server também no Docker.
-- A integração com ERP é simulada: o status `ERRO` é produzido pelo seed via `TituloService.registrar_erro_integracao`.
-- O lock de concorrência em pagamentos não tem teste automatizado multi-conexão (a suíte usa uma transação por teste).
-- A imagem Docker inclui as dependências de desenvolvimento, pois os testes rodam no mesmo container.
-- Camada de IA: apenas OpenAI, via Chat Completions.
-- Agente sem memória entre requisições e sem tools de escrita (ações ficam para a Fase 7).
-- RAG básico de propósito: sem reranking, busca híbrida, reescrita de pergunta ou limiar de score (o LLM decide se os trechos são suficientes).
-- O `FakeEmbeddingProvider` usa bag-of-words: os testes validam o pipeline, não a qualidade semântica da busca.
-- Os smoke tests e os evals com a OpenAI real são manuais: não rodam na suíte nem em CI.
-- Os evals usam checks por termos: medem invariantes, não a qualidade linguística da resposta.
+### Optional next step
+
+- [ ] Write actions with **explicit user confirmation** before any financial mutation
+
+The current Copilot remains read-only by design.
+
+---
+
+## Design principles
+
+```text
+LLM
+  interprets
+  selects tools
+  explains
+
+Backend
+  calculates
+  validates
+  applies business rules
+  owns transactions
+
+Frontend
+  presents
+  localizes
+```
+
+This boundary is the core idea of the project.
