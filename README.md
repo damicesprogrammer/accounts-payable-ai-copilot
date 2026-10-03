@@ -1,10 +1,10 @@
 # AP Copilot
 
-Módulo simplificado de **Títulos a Pagar** com um Copilot de IA (em construção), desenvolvido como projeto de portfólio.
+Módulo simplificado de **Títulos a Pagar** com um Copilot de IA, desenvolvido como projeto de portfólio.
 
 O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio reais e bem testadas, que serve de base para demonstrar engenharia de IA aplicada — tool calling, RAG, embeddings e agentes — **sem** abrir mão de segurança: o LLM nunca acessa o banco nem executa SQL, apenas chama ferramentas explícitas da aplicação.
 
-> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling), 3 (RAG com pgvector) e 4 (agent loop) concluídas. Veja o [roadmap](#roadmap).
+> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling), 3 (RAG com pgvector), 4 (agent loop) e 5 (frontend) concluídas. Veja o [roadmap](#roadmap).
 
 ---
 
@@ -16,18 +16,24 @@ O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio rea
 | Persistência | PostgreSQL 16 (imagem com pgvector), SQLAlchemy 2.0, Alembic |
 | Qualidade | pytest (contra Postgres real), Ruff |
 | IA | SDK oficial da OpenAI (atrás de um contrato próprio), Pydantic para structured outputs, pgvector para busca semântica |
+| Frontend | React, TypeScript, Vite, Tailwind CSS, React Router, Vitest |
 | Infra | Docker, Docker Compose, uv |
 
 ## Como executar
 
-Pré-requisito: Docker com Docker Compose.
+Pré-requisito: Docker com Docker Compose. Node.js 22+ só é necessário para desenvolver o frontend fora do Docker.
+
+### Stack completa com Docker
 
 ```bash
-docker compose up -d --build                       # sobe Postgres + API (aplica migrations)
+docker compose up -d --build                       # sobe Postgres + API (aplica migrations) + frontend
 docker compose exec api python -m scripts.seed     # popula com dados sintéticos
 docker compose exec api python -m scripts.index_docs  # indexa a base de conhecimento (requer OPENAI_API_KEY)
 ```
 
+URLs locais:
+
+- Frontend: http://localhost:5173
 - API: http://localhost:8000
 - Documentação interativa (OpenAPI): http://localhost:8000/docs
 
@@ -38,6 +44,21 @@ docker compose exec api python -m scripts.seed --reset   # recria os dados
 ```
 
 As variáveis de ambiente têm defaults no `docker-compose.yml`; para alterá-las, copie `.env.example` para `.env`.
+
+### Desenvolvimento do frontend (Node local, com hot reload)
+
+Com a API rodando (por exemplo, `docker compose up -d db api`):
+
+```bash
+cd frontend
+npm install
+npm run dev        # http://localhost:5173
+npm test           # testes (Vitest)
+npm run lint       # ESLint
+npm run build      # type-check + build de produção
+```
+
+A URL da API vem de `VITE_API_URL` (default `http://localhost:8000`; ver `frontend/.env.example`). A porta 5173 é fixa porque é a origem liberada no CORS da API; não rode o `npm run dev` e o container `frontend` ao mesmo tempo.
 
 ---
 
@@ -194,6 +215,8 @@ docker compose exec api pytest
 - `tests/rag/` — chunking, indexação, busca no pgvector e resposta com validação de fontes (embeddings e LLM fake).
 - `tests/agent/` — agent loop (roteiros determinísticos com LLM fake) e garantias de segurança do agente.
 - Rodam contra o banco `ap_copilot_test` (criado automaticamente pelo compose), com o schema gerado pelas migrations e rollback ao fim de cada teste.
+
+Frontend (`cd frontend && npm test`, Vitest + Testing Library, sem E2E): formatação de moeda e data, `StatusBadge` e a página do Copilot (resposta, `tools_used`, Markdown sem HTML bruto, erro da API e API indisponível). As regras financeiras não são testadas de novo no frontend.
 
 ---
 
@@ -453,6 +476,31 @@ Mostra a pergunta, as tools usadas e a resposta final. Consome tokens e não faz
 
 ---
 
+## Frontend
+
+Interface para demonstrar o backend e o Copilot: **consulta**, sem operações financeiras (aprovar, pagar, estornar etc. continuam disponíveis só pela API).
+
+```
+Navegador ──► FastAPI ──► AgentService ──► OpenAI
+```
+
+O navegador nunca fala com a OpenAI. A `OPENAI_API_KEY` fica só na API; o frontend usa apenas `VITE_API_URL`, que não é segredo.
+
+| Tela | Endpoints |
+|---|---|
+| **Accounts Payable**: lista com filtros de status, fornecedor e vencidos (filtragem feita pelo backend) | `GET /titulos`, `GET /fornecedores` |
+| **Detalhe do título**: resumo, rateios, pagamentos (confirmados e estornados) e auditoria | `GET /titulos/{id}`, `/rateios`, `/pagamentos`, `/logs` |
+| **AI Copilot**: pergunta, resposta em Markdown e as tools realmente executadas (`tools_used`) | `POST /ai/copilot` |
+
+- **Backend calcula, frontend apresenta:** valor rateado, pago, saldo pendente e vencido vêm prontos da API; o frontend só formata (`Intl.NumberFormat` em BRL, datas `dd/mm/aaaa`).
+- **Sem camadas extras:** `fetch`, `useState`/`useEffect` e um hook `useApi` de poucas linhas; sem state management global, sem biblioteca de componentes.
+- O loading do Copilot é só "Analyzing...": o backend não transmite etapas intermediárias, então a UI não as simula.
+- `POST /ai/ask` (RAG) não tem tela própria; continua disponível pelo OpenAPI.
+- A API libera CORS somente para `http://localhost:5173` (`CORS_ORIGINS`, lista JSON).
+- No Docker, o frontend roda no servidor de desenvolvimento do Vite (sem Nginx nesta fase).
+
+---
+
 ## Roadmap
 
 | Fase | Escopo | Status |
@@ -462,13 +510,14 @@ Mostra a pergunta, as tools usadas e a resposta final. Consome tokens e não faz
 | 2 | Contrato de LLM, provider OpenAI, tool calling, structured outputs e tools de leitura | ✅ |
 | 3 | RAG: documentação → chunking → embeddings → pgvector, com citação e validação de fontes | ✅ |
 | 4 | Agente Copilot: agent loop com tools somente leitura | ✅ |
-| 5 | Frontend (React + TypeScript + Tailwind) | ⏳ |
+| 5 | Frontend (React + TypeScript + Tailwind): consulta de títulos e interface do Copilot | ✅ |
 | 6 | Observabilidade, avaliações e hardening | ⏳ |
 | 7 | Ações com confirmação explícita do usuário (opcional) | ⏳ |
 
 ### Limitações conhecidas
 
 - Sem autenticação/autorização.
+- Frontend só de consulta, sem paginação na lista (até 200 títulos) e servido pelo Vite dev server também no Docker.
 - A integração com ERP é simulada: o status `ERRO` é produzido pelo seed via `TituloService.registrar_erro_integracao`.
 - O lock de concorrência em pagamentos não tem teste automatizado multi-conexão (a suíte usa uma transação por teste).
 - A imagem Docker inclui as dependências de desenvolvimento, pois os testes rodam no mesmo container.
