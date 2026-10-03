@@ -44,6 +44,8 @@ services:
     environment:
       # URL da API vista pelo navegador (não pelo container). Sem segredos aqui.
       VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+      # Hot reload: volumes montados do Windows/macOS não propagam eventos de arquivo.
+      CHOKIDAR_USEPOLLING: "true"
     ports:
       # Porta fixa: é a origem liberada no CORS da API.
       - "5173:5173"
