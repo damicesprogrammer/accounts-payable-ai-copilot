@@ -1,6 +1,6 @@
 services:
   db:
-    # Imagem com pgvector já disponível; a extensão só será ativada na fase de RAG.
+    # Imagem com pgvector; a extensão é ativada pela migration 0003 (RAG).
     image: pgvector/pgvector:pg16
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-ap_copilot}
@@ -27,6 +27,7 @@ services:
       LLM_PROVIDER: ${LLM_PROVIDER:-openai}
       OPENAI_API_KEY: ${OPENAI_API_KEY:-}
       OPENAI_MODEL: ${OPENAI_MODEL:-}
+      OPENAI_EMBEDDING_MODEL: ${OPENAI_EMBEDDING_MODEL:-text-embedding-3-small}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:

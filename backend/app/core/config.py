@@ -20,6 +20,7 @@ class Settings(BaseSettings):
     llm_provider: str = "openai"
     openai_api_key: SecretStr | None = None  # SecretStr: nunca aparece em repr/logs
     openai_model: str | None = None
+    openai_embedding_model: str = "text-embedding-3-small"
     llm_timeout_seconds: float = 30.0
 
 

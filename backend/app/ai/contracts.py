@@ -61,3 +61,13 @@ class LLMProvider(Protocol):
         nunca devolve objeto parcialmente validado.
         """
         ...
+
+
+class EmbeddingProvider(Protocol):
+    name: str
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        """Um vetor por texto, na mesma ordem."""
+        ...
+
+    def embed_query(self, text: str) -> list[float]: ...

@@ -1,7 +1,11 @@
+import re
+import zlib
+
 from pydantic import BaseModel, ValidationError
 
 from app.ai.contracts import ChatMessage, LLMResponse, ToolDefinition
 from app.ai.exceptions import LLMStructuredOutputError
+from app.models import EMBEDDING_DIM
 
 Roteiro = LLMResponse | str | Exception
 
@@ -53,3 +57,38 @@ class FakeLLMProvider:
         if isinstance(resposta, Exception):
             raise resposta
         return resposta
+
+
+class FakeEmbeddingProvider:
+    """Embeddings determinísticos para testes: sem rede, sem tokens, sem API key.
+
+    Não simula semântica. Cada palavra incrementa uma posição fixa do vetor
+    (crc32 da palavra), então textos que compartilham palavras ficam próximos
+    na distância de cosseno — o suficiente para testes previsíveis de busca.
+
+    `erro`: se informado, é lançado em toda chamada (simula falha do provider).
+    """
+
+    name = "fake"
+
+    def __init__(self, *, erro: Exception | None = None) -> None:
+        self._erro = erro
+        self.chamadas: list[list[str]] = []
+
+    def embed_texts(self, texts: list[str]) -> list[list[float]]:
+        self.chamadas.append(list(texts))
+        if self._erro:
+            raise self._erro
+        return [_vetor_bag_of_words(texto) for texto in texts]
+
+    def embed_query(self, text: str) -> list[float]:
+        return self.embed_texts([text])[0]
+
+
+def _vetor_bag_of_words(texto: str) -> list[float]:
+    vetor = [0.0] * EMBEDDING_DIM
+    for palavra in re.findall(r"\w+", texto.lower()):
+        vetor[zlib.crc32(palavra.encode()) % EMBEDDING_DIM] += 1.0
+    if not any(vetor):
+        vetor[0] = 1.0  # vetor nulo não tem distância de cosseno definida
+    return vetor
