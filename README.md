@@ -4,7 +4,7 @@ Módulo simplificado de **Títulos a Pagar** com um Copilot de IA (em construç�
 
 O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio reais e bem testadas, que serve de base para demonstrar engenharia de IA aplicada — tool calling, RAG, embeddings e agentes — **sem** abrir mão de segurança: o LLM nunca acessa o banco nem executa SQL, apenas chama ferramentas explícitas da aplicação.
 
-> **Status:** Fase 1 concluída (backend financeiro). Veja o [roadmap](#roadmap).
+> **Status:** Fases 1 (backend financeiro) e 2 (fundação de LLM e tool calling) concluídas. Veja o [roadmap](#roadmap).
 
 ---
 
@@ -15,6 +15,7 @@ O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio rea
 | API | Python 3.12, FastAPI, Pydantic v2 |
 | Persistência | PostgreSQL 16 (imagem com pgvector), SQLAlchemy 2.0, Alembic |
 | Qualidade | pytest (contra Postgres real), Ruff |
+| IA | SDK oficial da OpenAI (atrás de um contrato próprio), Pydantic para structured outputs |
 | Infra | Docker, Docker Compose, uv |
 
 ## Como executar
@@ -58,7 +59,10 @@ HTTP ──► api/routes ──► services ──► repositories ──► Po
 | `models/` | Entidades ORM e constraints de banco. |
 | `core/` | Configuração, sessão de banco, exceções, logging estruturado. |
 
-Fases futuras adicionam `ai/` (providers de LLM), `tools/` (funções que o agente pode chamar — que reutilizam os services) e `rag/`.
+| `ai/` | Contrato do LLM e providers (OpenAI e fake para testes). Ver [Camada de IA](#camada-de-ia). |
+| `tools/` | Funções que o LLM pode solicitar (allowlist explícita). Chamam services, nunca repositories. |
+
+Fases futuras adicionam `rag/`.
 
 ### Decisões técnicas
 
@@ -183,7 +187,89 @@ docker compose exec api pytest
 
 - `tests/services/` — regras de negócio (um teste nomeado por regra, ex.: `test_regra1_…`, `test_regra5_…`).
 - `tests/api/` — fluxos HTTP de ponta a ponta e formato de erro.
+- `tests/ai/` — providers (fake e OpenAI com cliente substituto: sem rede, sem tokens, sem API key).
+- `tests/tools/` — registry, tools financeiras e garantias de segurança.
 - Rodam contra o banco `ap_copilot_test` (criado automaticamente pelo compose), com o schema gerado pelas migrations e rollback ao fim de cada teste.
+
+---
+
+## Camada de IA
+
+Nesta fase existem apenas os blocos fundamentais: contrato de LLM, provider OpenAI, tool calling e structured outputs. **Ainda não há loop de agente, RAG nem tools de escrita.**
+
+```
+LLMProvider.generate(mensagens, tools)      ← contrato próprio (ai/contracts.py)
+   └─ OpenAIProvider                        ← único módulo que conhece a SDK
+        └─ resposta normalizada: LLMResponse { content, tool_calls: [ToolCall] }
+
+ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repository ─► PostgreSQL
+              │
+              ├─ nome fora da allowlist   → TOOL_NAO_PERMITIDA
+              ├─ argumentos inválidos     → ARGUMENTOS_INVALIDOS (validação Pydantic)
+              ├─ DomainError              → código do domínio (ex.: TITULO_NAO_ENCONTRADO)
+              └─ erro inesperado          → ERRO_INTERNO (detalhes só no log do servidor)
+```
+
+| Arquivo | Conteúdo |
+|---|---|
+| `ai/contracts.py` | `ChatMessage`, `ToolDefinition`, `ToolCall`, `LLMResponse`, `TokenUsage` e o `Protocol` `LLMProvider` |
+| `ai/exceptions.py` | `LLMConfigurationError`, `LLMTimeoutError`, `LLMProviderError`, `LLMStructuredOutputError` |
+| `ai/providers/openai.py` | Conversão de/para a SDK da OpenAI, tradução de erros, log de metadados |
+| `ai/providers/fake.py` | Provider roteirizado para testes |
+| `ai/providers/__init__.py` | `get_llm_provider()`: escolhe o provider pela configuração |
+| `tools/registry.py` | `ToolRegistry` e `criar_registry_financeiro()`, a allowlist explícita |
+| `tools/titulo_tools.py` | As tools de consulta |
+
+### Tools disponíveis (todas somente leitura)
+
+| Tool | Service usado |
+|---|---|
+| `get_titulo(titulo_id)` | `TituloService.obter_detalhe`: status, fornecedor, datas, valor total, rateado, pago, saldo e vencido |
+| `get_rateios_titulo(titulo_id)` | `RateioService.listar` |
+| `get_pagamentos_titulo(titulo_id)` | `PagamentoService.listar` |
+| `get_logs_titulo(titulo_id)` | `TituloService.listar_logs` |
+| `get_titulos_vencidos()` | `TituloService.listar(vencidos=True)` |
+
+Resultado padronizado, serializável em JSON (valores monetários como string com 2 casas):
+
+```json
+{ "ok": true,  "data": { "numero": "NF-9008", "saldo_pendente": "1800.00", "...": "..." }, "error": null }
+{ "ok": false, "data": null, "error": { "code": "TITULO_NAO_ENCONTRADO", "message": "Título 999 não encontrado." } }
+```
+
+### Structured outputs
+
+`provider.generate_structured(mensagens, response_model=MeuSchema)` devolve uma instância validada de `MeuSchema`. Se a resposta não for compatível, lança `LLMStructuredOutputError`. Nunca devolve um objeto parcialmente validado.
+
+### Segurança
+
+- O LLM não acessa o banco nem gera SQL: ele só pode pedir tools pelo nome. O nome serve apenas como chave de um dicionário de tools registradas explicitamente, sem `eval`, `exec`, import dinâmico ou `getattr` sobre texto do modelo.
+- Os argumentos são validados por modelos Pydantic com `extra="forbid"` antes de qualquer execução.
+- Testes garantem que a allowlist é exatamente a esperada, que nenhuma tool altera dados (sem flush, sem mudança de estado), que argumentos maliciosos são recusados e que erros internos não vazam detalhes.
+
+### Configuração
+
+| Variável | Descrição |
+|---|---|
+| `LLM_PROVIDER` | `openai` (único suportado nesta fase) |
+| `OPENAI_API_KEY` | Chave da API. Lida como `SecretStr`: não aparece em `repr`, logs ou respostas |
+| `OPENAI_MODEL` | Modelo a usar (obrigatório para chamadas reais) |
+
+A API financeira sobe e funciona sem essas variáveis; a ausência só gera erro (`LLMConfigurationError`) quando algo que usa o LLM é chamado. Defina-as no `.env` da raiz, que não é versionado.
+
+### Observabilidade
+
+Cada chamada ao LLM gera um log estruturado com `provider`, `model`, `duration_ms`, `input_tokens`, `output_tokens`, `finish_reason` e o número de `tool_calls`. Cada execução de tool registra `tool`, `ok`, `error_code` e `duration_ms`. Prompts e respostas não são registrados.
+
+### Smoke test manual (opcional)
+
+Com `OPENAI_API_KEY` e `OPENAI_MODEL` configurados (consome tokens; não faz parte do `pytest`):
+
+```bash
+docker compose exec api python -m scripts.smoke_openai --titulo-id 4
+```
+
+Prova o fluxo: LLM real → solicita tool → `ToolCall` → `ToolRegistry` → service → resultado estruturado.
 
 ---
 
@@ -192,16 +278,19 @@ docker compose exec api pytest
 | Fase | Escopo | Status |
 |---|---|---|
 | 1 | Backend financeiro: entidades, regras, CRUD, auditoria, testes, Docker | ✅ |
-| 2 | Camada de LLM independente de fornecedor (OpenAI / Anthropic / Gemini), tool calling e structured outputs | ⏳ |
+| 1.1 | Estorno em título PAGO (reabre como PENDENTE) e renomeação da auditoria (`logs_auditoria`) | ✅ |
+| 2 | Contrato de LLM, provider OpenAI, tool calling, structured outputs e tools de leitura | ✅ |
 | 3 | RAG: documentação → chunking → embeddings → pgvector, com citação de fontes | ⏳ |
 | 4 | Agente Copilot com tools somente leitura | ⏳ |
 | 5 | Frontend (React + TypeScript + Tailwind) | ⏳ |
 | 6 | Observabilidade, avaliações e hardening | ⏳ |
 | 7 | Ações com confirmação explícita do usuário (opcional) | ⏳ |
 
-### Limitações conhecidas (Fase 1)
+### Limitações conhecidas
 
 - Sem autenticação/autorização.
 - A integração com ERP é simulada: o status `ERRO` é produzido pelo seed via `TituloService.registrar_erro_integracao`.
 - O lock de concorrência em pagamentos não tem teste automatizado multi-conexão (a suíte usa uma transação por teste).
 - A imagem Docker inclui as dependências de desenvolvimento, pois os testes rodam no mesmo container.
+- Camada de IA: apenas OpenAI. Ainda não há loop de agente (o modelo solicita tools, mas o resultado ainda não volta para ele).
+- O smoke test com a OpenAI real é manual e não roda na suíte.
