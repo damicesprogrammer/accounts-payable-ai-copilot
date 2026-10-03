@@ -1,5 +1,6 @@
 from collections.abc import Sequence
 from datetime import date
+from decimal import Decimal
 
 from sqlalchemy.orm import Session
 
@@ -9,7 +10,13 @@ from app.repositories.log_repository import LogRepository
 from app.repositories.pagamento_repository import PagamentoRepository
 from app.repositories.rateio_repository import RateioRepository
 from app.repositories.titulo_repository import TituloRepository
-from app.schemas.titulo import TituloCreate, TituloDetalhe, TituloRead, TituloUpdate
+from app.schemas.titulo import (
+    TituloCreate,
+    TituloDetalhe,
+    TituloRead,
+    TitulosVencidos,
+    TituloUpdate,
+)
 from app.services import status_titulo
 from app.services.audit_service import AuditService
 from app.services.fornecedor_service import FornecedorService
@@ -30,7 +37,7 @@ class TituloService:
         fornecedor_id: int | None = None,
         vencidos: bool = False,
         hoje: date | None = None,
-        limit: int = 50,
+        limit: int | None = 50,
         offset: int = 0,
     ) -> Sequence[TituloPagar]:
         """`vencidos=True`: títulos em aberto com vencimento anterior a `hoje`."""
@@ -60,10 +67,27 @@ class TituloService:
         É a visão "explicável" do título: responde quanto falta ratear, quanto
         falta pagar e se está vencido — base para a futura tool get_titulo.
         """
-        titulo = self.obter(titulo_id)
+        return self._detalhar(self.obter(titulo_id), hoje or date.today())
+
+    def resumo_vencidos(self, *, hoje: date | None = None) -> TitulosVencidos:
+        """Todos os títulos vencidos, com quantidade e totais calculados aqui.
+
+        Os totais vêm do sistema para que ninguém (nem o LLM) precise somar a lista.
+        """
+        hoje = hoje or date.today()
+        titulos = [
+            self._detalhar(t, hoje) for t in self.listar(vencidos=True, hoje=hoje, limit=None)
+        ]
+        return TitulosVencidos(
+            quantidade=len(titulos),
+            valor_total_titulos=sum((t.valor_total for t in titulos), Decimal("0.00")),
+            saldo_pendente_total=sum((t.saldo_pendente for t in titulos), Decimal("0.00")),
+            titulos=titulos,
+        )
+
+    def _detalhar(self, titulo: TituloPagar, hoje: date) -> TituloDetalhe:
         valor_rateado = RateioRepository(self.db).soma_por_titulo(titulo.id)
         valor_pago = PagamentoRepository(self.db).soma_confirmados(titulo.id)
-        hoje = hoje or date.today()
         return TituloDetalhe(
             **TituloRead.model_validate(titulo).model_dump(),
             valor_rateado=valor_rateado,

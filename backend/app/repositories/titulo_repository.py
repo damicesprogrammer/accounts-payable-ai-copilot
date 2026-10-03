@@ -37,7 +37,7 @@ class TituloRepository(BaseRepository[TituloPagar]):
         fornecedor_id: int | None = None,
         vencimento_antes_de: date | None = None,
         status_in: Iterable[StatusTitulo] | None = None,
-        limit: int = 50,
+        limit: int | None = 50,
         offset: int = 0,
     ) -> Sequence[TituloPagar]:
         stmt = select(TituloPagar).order_by(TituloPagar.data_vencimento, TituloPagar.id)

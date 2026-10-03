@@ -62,3 +62,12 @@ class TituloDetalhe(TituloRead):
     valor_pago: Decimal
     saldo_pendente: Decimal
     vencido: bool
+
+
+class TitulosVencidos(ReadSchema):
+    """Títulos vencidos com os totais calculados pelo sistema (Decimal, nunca float)."""
+
+    quantidade: int
+    valor_total_titulos: Decimal  # soma do valor original dos títulos
+    saldo_pendente_total: Decimal  # soma do que ainda falta pagar
+    titulos: list[TituloDetalhe]

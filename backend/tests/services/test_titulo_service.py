@@ -224,3 +224,35 @@ def test_titulo_pago_nao_e_considerado_vencido(db):
 
     assert detalhe.vencido is False
     assert detalhe.saldo_pendente == Decimal("0.00")
+
+
+def test_resumo_vencidos_totaliza_valor_original_e_saldo_pendente_em_decimal(db):
+    passado = HOJE - timedelta(days=60)
+    parcial = criar_titulo_aprovado(
+        db, valor="1000.10", emissao=passado, vencimento=HOJE - timedelta(days=5)
+    )
+    pagar(db, parcial, "400.05")
+    aberto = criar_titulo(db, valor="250.25", emissao=passado, vencimento=HOJE - timedelta(days=1))
+    quitado = criar_titulo_aprovado(
+        db, valor="999.00", emissao=passado, vencimento=HOJE - timedelta(days=3)
+    )
+    pagar(db, quitado, "999.00")  # PAGO: deixa de ser vencido
+    criar_titulo(db, valor="777.00", emissao=HOJE, vencimento=HOJE)  # ainda não venceu
+
+    resumo = TituloService(db).resumo_vencidos(hoje=HOJE)
+
+    assert resumo.quantidade == 2
+    assert [t.id for t in resumo.titulos] == [parcial.id, aberto.id]
+    assert resumo.valor_total_titulos == Decimal("1250.35")
+    # O parcialmente pago entra só com o que falta: 600.05 + 250.25.
+    assert resumo.saldo_pendente_total == Decimal("850.30")
+    assert [t.saldo_pendente for t in resumo.titulos] == [Decimal("600.05"), Decimal("250.25")]
+    assert isinstance(resumo.valor_total_titulos, Decimal)
+    assert isinstance(resumo.saldo_pendente_total, Decimal)
+
+
+def test_resumo_vencidos_sem_titulos(db):
+    resumo = TituloService(db).resumo_vencidos(hoje=HOJE)
+
+    assert (resumo.quantidade, resumo.titulos) == (0, [])
+    assert resumo.valor_total_titulos == resumo.saldo_pendente_total == Decimal("0.00")
