@@ -249,6 +249,7 @@ ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repositor
 | `ai/providers/__init__.py` | `get_llm_provider()` e `get_embedding_provider()`, a partir da configuração |
 | `tools/registry.py` | `ToolRegistry` e `criar_registry_financeiro()`, a allowlist explícita |
 | `tools/titulo_tools.py` | As tools de consulta financeira |
+| `tools/fornecedor_tools.py` | A tool `get_fornecedores` |
 | `tools/documentacao_tools.py` | A tool `search_documentation` |
 
 ### Tools disponíveis (todas somente leitura)
@@ -260,6 +261,8 @@ ToolCall ─► ToolRegistry.execute ─► Tool ─► Service ─► Repositor
 | `get_pagamentos_titulo(titulo_id)` | `PagamentoService.listar` |
 | `get_logs_titulo(titulo_id)` | `TituloService.listar_logs` |
 | `get_titulos_vencidos()` | `TituloService.resumo_vencidos`: `quantidade`, `valor_total_titulos` (soma dos valores originais), `saldo_pendente_total` (soma do que falta pagar) e os títulos com valor total, pago e saldo |
+| `get_titulos_por_status(status)` | `TituloService.resumo_por_status`: `status` validado pelo enum `StatusTitulo`, `quantidade` de **todos** os títulos do status (sem paginação) e os dados básicos de cada um. PENDENTE é status; VENCIDO é data: são tools distintas |
+| `get_fornecedores(ativo?)` | `FornecedorService.resumo`: todos, só ativos ou só inativos, com `quantidade` calculada pelo backend |
 | `search_documentation(query)` | `RAGService.search`: só retrieval (`source`, `section`, `content`, `score`), **não** chama o LLM |
 
 Resultado padronizado, serializável em JSON (valores monetários como string com 2 casas):
@@ -504,13 +507,13 @@ Exit code `0` se todos os casos passarem, `1` se algum falhar e `2` em erro de c
 
 | Categoria | O que mede |
 |---|---|
-| `agent` | O agente escolhe as tools adequadas (dado do título, erro de integração, regras de estorno e de rateio) |
+| `agent` | O agente escolhe as tools adequadas (dado do título, erro de integração, regras de estorno e de rateio, títulos por status, fornecedores) |
 | `finance` | Os números da resposta são os calculados pelo backend (vencidos, saldos) |
 | `safety` | Recusa fora do domínio, "sem informação" no que não está documentado (PIX) e prompt injection (na pergunta e em um trecho de documentação simulado) |
 | `rag` | Retrieval separado da geração: seção esperada no top 3, com score, source e section registrados |
 
 - **Casos em JSON** (`backend/evals/cases/*.json`), um arquivo por categoria. Os checks verificam invariantes, nunca o texto exato: `required_tools ⊆ tools usadas` (tool extra legítima não reprova), `forbidden_tools`, `no_tools`, `expected_contains` (sem diferenciar maiúsculas, aceita alternativas), `forbidden_contains`, `max_answer_chars`, `expected_chunks` e `expect_no_sources`.
-- **Sem números hardcoded:** placeholders como `{NF-9004}`, `{NF-9008.saldo_pendente}` e `{vencidos.quantidade}` são resolvidos pelos services antes do eval; valores aceitam `197.225,78` ou `197225.78`.
+- **Sem números hardcoded:** placeholders como `{NF-9004}`, `{NF-9008.saldo_pendente}`, `{vencidos.quantidade}`, `{PENDENTE.quantidade}` e `{fornecedores_ativos.quantidade}` são resolvidos pelos services antes do eval; valores aceitam `197.225,78` ou `197225.78`.
 - **Invariantes em todo caso do agente:** nenhum flush no banco e nenhuma tool fora da allowlist executada.
 - **Métricas por caso:** aprovado ou não, motivo, duração, tools, chamadas ao LLM e tokens de entrada, saída e embeddings. Os tokens vêm dos logs que os providers já emitem: o runner não conhece a SDK.
 - **Custo:** só é estimado se `--input-price` e `--output-price` (USD por 1M de tokens) forem informados. **É uma estimativa:** depende do preço configurado, que muda com o tempo; embeddings não entram na conta.
@@ -518,7 +521,9 @@ Exit code `0` se todos os casos passarem, `1` se algum falhar e `2` em erro de c
 - **Tool inexistente** (ex.: `executar_sql`) não é induzida no modelo real: a recusa é determinística (`TOOL_NAO_PERMITIDA`) e já está coberta pelo pytest.
 - Não há LLM-as-a-judge, plataforma de observabilidade nem modo fake no runner: o objetivo é medir o modelo real.
 
-Última execução (20 casos): 20/20, ~41 s, 25 chamadas ao LLM e ~33 mil tokens. Cada chamada do agente consome ~950 tokens de entrada só com prompt e tools; uma pergunta fora do domínio usa uma única chamada.
+Última execução (24 casos): 24/24, ~54 s, 33 chamadas ao LLM e ~52 mil tokens. Cada chamada do agente consome ~1.200 tokens de entrada só com prompt e tools; uma pergunta fora do domínio usa uma única chamada.
+
+**O placar mede só os cenários definidos.** Um 20/20 não significava que o agente acertava qualquer pergunta: depois dele, "Quantos títulos pendentes temos?" foi respondida manualmente com os 16 *vencidos* em aberto, porque nenhuma tool consultava por status e o modelo usou a mais próxima. O ciclo foi: falha manual → investigação → nova capacidade (`get_titulos_por_status`, `get_fornecedores`) → novos casos permanentes (`agent_titulos_pendentes`, `agent_titulos_aprovados`, `agent_fornecedores_total`, `agent_fornecedores_ativos`). Falhas encontradas em uso real devem sempre virar evals de regressão.
 
 **Observação de retrieval (medida, não corrigida):** os scores das seções relevantes ficam próximos (≈0,50–0,72) e, em "Quando um título não pode mais ser cancelado?", `regras_titulos.md › Cancelamento` aparece em 4º, atrás de `manual_financeiro.md › Fluxo de cancelamento`, que também responde. Como o agente recebe o top 5, não houve impacto na resposta. Perguntas fora do domínio ficam bem abaixo (≈0,15). Nenhum threshold, reranker ou busca híbrida foi adicionado.
 
