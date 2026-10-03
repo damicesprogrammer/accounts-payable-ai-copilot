@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import ai, centros_custo, fornecedores, titulos
 from app.core.config import get_settings
@@ -13,6 +14,13 @@ app = FastAPI(
     version="0.1.0",
 )
 app.add_middleware(RequestIdMiddleware)
+# Somente o frontend local (Vite) e somente o que ele usa: leitura e POST /ai/copilot.
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=get_settings().cors_origins,
+    allow_methods=["GET", "POST"],
+    allow_headers=["Content-Type"],
+)
 register_error_handlers(app)
 
 app.include_router(fornecedores.router)

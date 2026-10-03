@@ -14,6 +14,8 @@ class Settings(BaseSettings):
         "postgresql+psycopg://ap_copilot:ap_copilot@localhost:5432/ap_copilot_test"
     )
     log_level: str = "INFO"
+    # Origens do frontend autorizadas a chamar a API pelo navegador (lista JSON no .env).
+    cors_origins: list[str] = ["http://localhost:5173"]
 
     # IA — opcionais: a API financeira funciona sem eles. A falta só gera erro
     # quando algo que usa o LLM é chamado (ver app.ai.providers.get_llm_provider).
