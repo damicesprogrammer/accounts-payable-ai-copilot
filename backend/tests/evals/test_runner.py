@@ -12,6 +12,7 @@ from decimal import Decimal
 
 import pytest
 
+from app.agent.service import prompt_sistema
 from app.ai.contracts import LLMResponse, ToolCall
 from app.ai.exceptions import LLMConfigurationError, LLMTimeoutError
 from app.ai.providers.fake import FakeEmbeddingProvider, FakeLLMProvider
@@ -49,6 +50,15 @@ def test_campo_desconhecido_e_erro_de_configuracao(tmp_path):
     )
 
     with pytest.raises(runner.EvalConfigError, match="required_tool"):
+        runner.carregar_casos(diretorio=tmp_path)
+
+
+def test_idioma_nao_suportado_e_erro_de_configuracao(tmp_path):
+    (tmp_path / "agent.json").write_text(
+        json.dumps([{"id": "x", "question": "?", "language": "es-ES"}]), encoding="utf-8"
+    )
+
+    with pytest.raises(runner.EvalConfigError, match="language"):
         runner.carregar_casos(diretorio=tmp_path)
 
 
@@ -116,6 +126,21 @@ def test_required_tools_e_subconjunto_e_tool_extra_legitima_nao_falha():
     assert runner.verificar_resposta(caso, "ok", ["get_logs_titulo"]) == [
         "tools obrigatórias ausentes: ['get_titulo']"
     ]
+
+
+@pytest.mark.parametrize(
+    ("resposta", "falhas"),
+    [
+        ("Total: R$ 197,225.78; balance R$1,800.00.", []),  # formato en-US, moeda BRL
+        ("Total: R$ 197.225,78.", []),
+        ("Total: $197,225.78.", ["valores sem R$", "valor em dólar: '$197,225.78.'"]),
+        ("Total R$ 10.00, or $1,800 converted.", ["valor em dólar: '$1,800 conve'"]),
+        ("Total: US$ 1,800.00.", ["valores sem R$", "valor em dólar: '$ 1,800.00.'"]),
+        ("Total: 1,800.00 USD.", ["valores sem R$", "valor em dólar: 'USD.'"]),
+    ],
+)
+def test_brl_only_exige_reais_e_recusa_dolar(resposta, falhas):
+    assert runner.verificar_resposta({"brl_only": True}, resposta, []) == falhas
 
 
 def test_forbidden_tools_e_no_tools():
@@ -249,6 +274,15 @@ def test_caso_rag_registra_top_chunks_sem_conteudo(db):
 
     assert resultado["passed"] is True
     assert set(resultado["top_chunks"][0]) == {"source", "section", "score"}
+
+
+@pytest.mark.parametrize(("extra", "idioma"), [({}, "pt-BR"), ({"language": "en-US"}, "en-US")])
+def test_caso_do_agente_usa_o_idioma_do_caso(db, extra, idioma):
+    llm = FakeLLMProvider(["ok"])
+
+    _executar({"id": "x", "question": "?", **extra}, db, llm)
+
+    assert llm.chamadas[0]["messages"][0].content == prompt_sistema(idioma)
 
 
 def test_coletor_soma_tokens_registrados_pelos_providers():

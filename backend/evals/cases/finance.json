@@ -20,5 +20,13 @@
     "question": "Qual é o saldo pendente do título {NF-9011} e ele está vencido?",
     "required_tools": ["get_titulo"],
     "expected_contains": ["{NF-9011.saldo_pendente}", "vencido"]
+  },
+  {
+    "id": "finance_vencidos_en_us_preserva_brl",
+    "question": "Which invoices are overdue?",
+    "language": "en-US",
+    "required_tools": ["get_titulos_vencidos"],
+    "expected_contains": ["{vencidos.quantidade}", "overdue"],
+    "brl_only": true
   }
 ]

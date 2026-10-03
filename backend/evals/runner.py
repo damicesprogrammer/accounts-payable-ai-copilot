@@ -33,7 +33,7 @@ import sys
 import time
 from decimal import Decimal
 from pathlib import Path
-from typing import Any
+from typing import Any, get_args
 
 from sqlalchemy import event, func, select
 from sqlalchemy.orm import Session
@@ -45,6 +45,7 @@ from app.ai.providers import get_embedding_provider, get_llm_provider
 from app.core.db import SessionLocal
 from app.models import ChunkDocumentacao, StatusTitulo
 from app.rag.service import RAGService
+from app.schemas.agent import Idioma
 from app.services.fornecedor_service import FornecedorService
 from app.services.titulo_service import TituloService
 from app.tools.contracts import ToolResult
@@ -65,8 +66,13 @@ CAMPOS = {
     "injected_document",
     "expected_chunks",
     "expect_no_sources",
+    "language",
+    "brl_only",
 }
 TOP_K_RAG = 3  # a seção esperada precisa estar entre os primeiros resultados
+IDIOMAS = get_args(Idioma)
+# "$" que não faz parte de "R$" (ex.: "$197", "US$ 1,800"): valor convertido para dólar.
+DOLAR = re.compile(r"(?<!R)\$|\bUSD\b")
 PLACEHOLDER = re.compile(r"\{([^{}]+)\}")
 # Placeholder → filtro `ativo` de FornecedorService.resumo.
 FORNECEDORES = {"fornecedores": None, "fornecedores_ativos": True, "fornecedores_inativos": False}
@@ -93,6 +99,11 @@ def carregar_casos(
                 raise EvalConfigError(
                     f"Caso inválido em {arquivo.name}: {item.get('id', '?')} "
                     f"(campos desconhecidos: {sorted(desconhecidos) or 'nenhum'})."
+                )
+            if item.get("language", "pt-BR") not in IDIOMAS:
+                raise EvalConfigError(
+                    f"Caso inválido em {arquivo.name}: {item['id']} "
+                    f"(language deve ser um de {list(IDIOMAS)})."
                 )
             casos.append({**item, "category": nome})
 
@@ -176,6 +187,13 @@ def verificar_resposta(caso: dict[str, Any], resposta: str, tools: list[str]) ->
     for termo in caso.get("forbidden_contains", []):
         if _normalizar(termo) in texto:
             falhas.append(f"contém termo proibido: {termo}")
+
+    # Idioma muda o texto, não a moeda do domínio: valores continuam em reais.
+    if caso.get("brl_only"):
+        if "R$" not in resposta:
+            falhas.append("valores sem R$")
+        if m := DOLAR.search(resposta):
+            falhas.append(f"valor em dólar: {resposta[m.start() : m.start() + 12]!r}")
 
     limite = caso.get("max_answer_chars")
     if limite and len(resposta) > limite:
@@ -318,7 +336,8 @@ def _executar_agente(caso, db, llm, embeddings, resultado) -> list[str]:
 
     event.listen(db, "after_flush", registrar_flush)
     try:
-        resposta = AgentService(db, llm, registry).run(caso["question"])
+        idioma = caso.get("language", "pt-BR")
+        resposta = AgentService(db, llm, registry).run(caso["question"], idioma=idioma)
     finally:
         event.remove(db, "after_flush", registrar_flush)
 
