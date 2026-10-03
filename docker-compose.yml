@@ -39,5 +39,20 @@ services:
       db:
         condition: service_healthy
 
+  frontend:
+    build: ./frontend
+    environment:
+      # URL da API vista pelo navegador (não pelo container). Sem segredos aqui.
+      VITE_API_URL: ${VITE_API_URL:-http://localhost:8000}
+    ports:
+      # Porta fixa: é a origem liberada no CORS da API.
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+      # Mantém o node_modules da imagem (Linux), sem herdar o do host.
+      - /app/node_modules
+    depends_on:
+      - api
+
 volumes:
   pgdata:
