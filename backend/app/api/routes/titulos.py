@@ -2,7 +2,9 @@ from fastapi import APIRouter, status
 
 from app.api.deps import ERROS_404, ERROS_409, ERROS_422, DbSession, PaginacaoParams
 from app.models import StatusTitulo
+from app.schemas.rateio import RateioCreate, RateioRead
 from app.schemas.titulo import CancelamentoInput, TituloCreate, TituloRead, TituloUpdate
+from app.services.rateio_service import RateioService
 from app.services.titulo_service import TituloService
 
 router = APIRouter(prefix="/titulos", tags=["títulos"])
@@ -59,3 +61,38 @@ def cancelar_titulo(titulo_id: int, dados: CancelamentoInput, db: DbSession):
 )
 def reprocessar_titulo(titulo_id: int, db: DbSession):
     return TituloService(db).reprocessar(titulo_id)
+
+
+@router.post(
+    "/{titulo_id}/aprovar", response_model=TituloRead, responses={**ERROS_404, **ERROS_422}
+)
+def aprovar_titulo(titulo_id: int, db: DbSession):
+    """Exige rateio cobrindo 100% do valor do título."""
+    return TituloService(db).aprovar(titulo_id)
+
+
+# ---------------------------------------------------------------- rateios
+
+
+@router.get("/{titulo_id}/rateios", response_model=list[RateioRead], responses=ERROS_404)
+def listar_rateios(titulo_id: int, db: DbSession):
+    return RateioService(db).listar(titulo_id)
+
+
+@router.post(
+    "/{titulo_id}/rateios",
+    response_model=RateioRead,
+    status_code=status.HTTP_201_CREATED,
+    responses={**ERROS_404, **ERROS_409, **ERROS_422},
+)
+def adicionar_rateio(titulo_id: int, dados: RateioCreate, db: DbSession):
+    return RateioService(db).adicionar(titulo_id, dados)
+
+
+@router.delete(
+    "/{titulo_id}/rateios/{rateio_id}",
+    status_code=status.HTTP_204_NO_CONTENT,
+    responses={**ERROS_404, **ERROS_422},
+)
+def remover_rateio(titulo_id: int, rateio_id: int, db: DbSession) -> None:
+    RateioService(db).remover(titulo_id, rateio_id)

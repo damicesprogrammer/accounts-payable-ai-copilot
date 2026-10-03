@@ -5,6 +5,7 @@ from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessRuleError, ConflictError, NotFoundError
 from app.models import StatusLog, StatusTitulo, TipoLog, TituloPagar
+from app.repositories.rateio_repository import RateioRepository
 from app.repositories.titulo_repository import TituloRepository
 from app.schemas.titulo import TituloCreate, TituloUpdate
 from app.services import status_titulo
@@ -99,6 +100,17 @@ class TituloService:
         if dados.numero != titulo.numero:
             self._garantir_numero_unico(titulo.fornecedor_id, dados.numero)
 
+        # Regra 1 (lado inverso): reduzir o valor não pode deixar o rateio maior que o título.
+        valor_rateado = RateioRepository(self.db).soma_por_titulo(titulo.id)
+        if dados.valor_total < valor_rateado:
+            raise BusinessRuleError(
+                f"O valor total {dados.valor_total} é menor que o já rateado ({valor_rateado}). "
+                "Ajuste os rateios antes de reduzir o valor do título.",
+                code="VALOR_MENOR_QUE_RATEIO",
+                titulo_id=titulo.id,
+                valor_rateado=str(valor_rateado),
+            )
+
         alteracoes = [
             f"{campo}: {getattr(titulo, campo)} -> {novo}"
             for campo, novo in dados.model_dump().items()
@@ -112,6 +124,31 @@ class TituloService:
             "Título atualizado. " + ("; ".join(alteracoes) or "Nenhum campo alterado."),
             titulo_id=titulo.id,
         )
+        self.db.commit()
+        return titulo
+
+    def aprovar(self, titulo_id: int) -> TituloPagar:
+        """Aprova o título para pagamento.
+
+        Regra: só é possível aprovar quando o rateio cobre exatamente 100% do valor.
+        """
+        titulo = self.obter_para_alteracao(titulo_id)
+        status_titulo.validar_transicao(titulo.id, titulo.status, StatusTitulo.APROVADO)
+
+        valor_rateado = RateioRepository(self.db).soma_por_titulo(titulo.id)
+        if valor_rateado != titulo.valor_total:
+            faltante = titulo.valor_total - valor_rateado
+            raise BusinessRuleError(
+                f"Título {titulo.id} não pode ser aprovado: rateio cobre {valor_rateado} "
+                f"de {titulo.valor_total} (faltam {faltante}).",
+                code="RATEIO_INCOMPLETO",
+                titulo_id=titulo.id,
+                valor_total=str(titulo.valor_total),
+                valor_rateado=str(valor_rateado),
+                valor_faltante=str(faltante),
+            )
+
+        self.mudar_status(titulo, StatusTitulo.APROVADO, "Rateio conferido (100% do valor)")
         self.db.commit()
         return titulo
 
