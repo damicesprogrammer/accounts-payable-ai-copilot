@@ -10,7 +10,7 @@ from datetime import date, timedelta
 import pytest
 
 from app.agent.service import MAX_ITERATIONS, PROMPT_SISTEMA, AgentService
-from app.ai.contracts import ChatMessage, LLMResponse, ToolCall
+from app.ai.contracts import ChatMessage, LLMResponse, TokenUsage, ToolCall
 from app.ai.exceptions import AgentIterationLimitError, LLMProviderError, LLMTimeoutError
 from app.ai.providers.fake import FakeEmbeddingProvider, FakeLLMProvider
 from app.rag.chunking import Chunk
@@ -307,3 +307,19 @@ def test_log_registra_apenas_metadados(db, caplog):
     for sigiloso in ("PERGUNTA-SIGILOSA", "RESPOSTA-FINAL-SIGILOSA", "NF-SIGILOSA"):
         assert sigiloso not in todos
     assert "Você é o Copilot" not in todos  # o prompt não é registrado
+
+
+def test_log_soma_os_tokens_de_todas_as_chamadas_da_pergunta(db, caplog):
+    caplog.set_level(logging.INFO, logger="app.agent.service")
+    titulo = criar_titulo(db)
+    pedido = _pede(("c1", "get_titulo", {"titulo_id": titulo.id}))
+    pedido.usage = TokenUsage(input_tokens=900, output_tokens=20)
+    final = LLMResponse(
+        content="Ok.", model="fake", usage=TokenUsage(input_tokens=1100, output_tokens=60)
+    )
+    agente, _ = _agente(db, [pedido, final])
+
+    agente.run("Situação do título")
+
+    [registro] = [r for r in caplog.records if r.getMessage() == "Agente concluído"]
+    assert (registro.input_tokens, registro.output_tokens) == (2000, 80)

@@ -14,7 +14,7 @@ import time
 
 from sqlalchemy.orm import Session
 
-from app.ai.contracts import ChatMessage, LLMProvider
+from app.ai.contracts import ChatMessage, LLMProvider, TokenUsage
 from app.ai.exceptions import AgentIterationLimitError, LLMProviderError
 from app.schemas.agent import CopilotResponse, ToolUsada
 from app.tools.registry import ToolRegistry
@@ -67,15 +67,18 @@ class AgentService:
         ]
         definicoes = self.registry.definitions()
         tools_usadas: list[ToolUsada] = []
+        usos: list[TokenUsage] = []
 
         for iteracao in range(1, MAX_ITERATIONS + 1):
             resposta = self.llm.generate(mensagens, tools=definicoes)
+            if resposta.usage:
+                usos.append(resposta.usage)
 
             if not resposta.tool_calls:
                 if not (resposta.content or "").strip():
-                    self._log("Agente terminou sem resposta", iteracao, tools_usadas, inicio)
+                    self._log("Agente terminou sem resposta", iteracao, tools_usadas, usos, inicio)
                     raise LLMProviderError("O modelo terminou sem uma resposta textual.")
-                self._log("Agente concluído", iteracao, tools_usadas, inicio)
+                self._log("Agente concluído", iteracao, tools_usadas, usos, inicio)
                 return CopilotResponse(answer=resposta.content, tools_used=tools_usadas)
 
             if iteracao == MAX_ITERATIONS:
@@ -99,12 +102,21 @@ class AgentService:
                     )
                 )
 
-        self._log("Agente atingiu o limite de iterações", MAX_ITERATIONS, tools_usadas, inicio)
+        self._log(
+            "Agente atingiu o limite de iterações", MAX_ITERATIONS, tools_usadas, usos, inicio
+        )
         raise AgentIterationLimitError(
             f"O agente atingiu o limite de {MAX_ITERATIONS} iterações sem concluir."
         )
 
-    def _log(self, mensagem: str, iteracoes: int, tools: list[ToolUsada], inicio: float) -> None:
+    def _log(
+        self,
+        mensagem: str,
+        iteracoes: int,
+        tools: list[ToolUsada],
+        usos: list[TokenUsage],
+        inicio: float,
+    ) -> None:
         # Apenas metadados: pergunta, respostas e resultados de tools não são registrados.
         logger.info(
             mensagem,
@@ -112,6 +124,9 @@ class AgentService:
                 "iteracoes": iteracoes,
                 "tools": [t.name for t in tools],
                 "tools_com_erro": sum(not t.ok for t in tools),
+                # Total da pergunta (soma das chamadas que informaram usage).
+                "input_tokens": sum(u.input_tokens for u in usos),
+                "output_tokens": sum(u.output_tokens for u in usos),
                 "duration_ms": round((time.perf_counter() - inicio) * 1000),
             },
         )
