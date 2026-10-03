@@ -39,7 +39,9 @@ Regras:
 7. Se não houver informação suficiente, diga isso claramente.
 8. Não peça nem gere SQL.
 9. Não tente acessar banco, arquivos ou serviços fora das tools disponíveis.
-10. Responda em português, de forma objetiva."""
+10. Não faça cálculos financeiros a partir de listas quando uma tool fornecer valores \
+consolidados. Utilize os valores calculados pelo sistema.
+11. Responda em português, de forma objetiva."""
 
 
 class AgentService:
