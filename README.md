@@ -4,7 +4,7 @@ Módulo simplificado de **Títulos a Pagar** com um Copilot de IA, desenvolvido 
 
 O objetivo não é ser um ERP: é um sistema pequeno, com regras de negócio reais e bem testadas, que serve de base para demonstrar engenharia de IA aplicada — tool calling, RAG, embeddings e agentes — **sem** abrir mão de segurança: o LLM nunca acessa o banco nem executa SQL, apenas chama ferramentas explícitas da aplicação.
 
-> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling), 3 (RAG com pgvector), 4 (agent loop) e 5 (frontend) concluídas. Veja o [roadmap](#roadmap).
+> **Status:** Fases 1 (backend financeiro), 2 (fundação de LLM e tool calling), 3 (RAG com pgvector), 4 (agent loop), 5 (frontend) e 6 (evals e hardening) concluídas. Veja o [roadmap](#roadmap).
 
 ---
 
@@ -214,6 +214,7 @@ docker compose exec api pytest
 - `tests/tools/` — registry, tools financeiras e garantias de segurança.
 - `tests/rag/` — chunking, indexação, busca no pgvector e resposta com validação de fontes (embeddings e LLM fake).
 - `tests/agent/` — agent loop (roteiros determinísticos com LLM fake) e garantias de segurança do agente.
+- `tests/evals/` — o runner de evals (leitura dos casos, checks, métricas, relatório e exit code), com providers fake.
 - Rodam contra o banco `ap_copilot_test` (criado automaticamente pelo compose), com o schema gerado pelas migrations e rollback ao fim de cada teste.
 
 Frontend (`cd frontend && npm test`, Vitest + Testing Library, sem E2E): formatação de moeda e data, `StatusBadge`, navegação ativa do `Layout` e a página do Copilot (resposta, `tools_used`, Markdown sem HTML bruto, erro da API e API indisponível). As regras financeiras não são testadas de novo no frontend.
@@ -470,7 +471,7 @@ A allowlist do `ToolRegistry` continua sendo o único mecanismo de permissão. T
 
 ### Observabilidade do agente
 
-Um log por execução com `iteracoes`, `tools` (nomes), `tools_com_erro` e `duration_ms`. Pergunta, respostas, resultados de tools e prompt não são registrados. Tokens e duração de cada chamada continuam no log do `OpenAIProvider`.
+Um log por execução com `iteracoes`, `tools` (nomes), `tools_com_erro`, `input_tokens` e `output_tokens` (somados entre as chamadas da pergunta) e `duration_ms`. Pergunta, respostas, resultados de tools e prompt não são registrados. Tokens e duração de cada chamada continuam no log do `OpenAIProvider`.
 
 ### Smoke test do agente (opcional)
 
@@ -485,6 +486,43 @@ docker compose exec api python -m scripts.smoke_agent --pergunta "Como faço uma
 Mostra a pergunta, as tools usadas e a resposta final. Consome tokens e não faz parte do `pytest`.
 
 > **Modelo de raciocínio com tools no Chat Completions:** alguns modelos recusam function tools em `/v1/chat/completions` com o raciocínio ativo (HTTP 400, "use /v1/responses or set reasoning_effort to 'none'"). Nesse caso, defina `OPENAI_REASONING_EFFORT=none`. Modelos sem raciocínio não aceitam o parâmetro: deixe a variável vazia.
+
+---
+
+## AI evaluations
+
+Uma pequena suíte reproduzível que mede o comportamento do sistema de IA com a **OpenAI real**. É opcional, **consome tokens** e **não faz parte do `pytest`** (que continua determinístico e sem rede). Requer o seed aplicado e a documentação indexada.
+
+```bash
+docker compose exec api python -m evals.runner                          # todos os casos
+docker compose exec api python -m evals.runner --category safety        # agent | finance | safety | rag
+docker compose exec api python -m evals.runner --case agent_titulo_erro
+docker compose exec api python -m evals.runner --output eval-results.json --input-price 0.40 --output-price 1.60   # preços ilustrativos
+```
+
+Exit code `0` se todos os casos passarem, `1` se algum falhar e `2` em erro de configuração (sem API key, sem seed ou sem índice).
+
+| Categoria | O que mede |
+|---|---|
+| `agent` | O agente escolhe as tools adequadas (dado do título, erro de integração, regras de estorno e de rateio) |
+| `finance` | Os números da resposta são os calculados pelo backend (vencidos, saldos) |
+| `safety` | Recusa fora do domínio, "sem informação" no que não está documentado (PIX) e prompt injection (na pergunta e em um trecho de documentação simulado) |
+| `rag` | Retrieval separado da geração: seção esperada no top 3, com score, source e section registrados |
+
+- **Casos em JSON** (`backend/evals/cases/*.json`), um arquivo por categoria. Os checks verificam invariantes, nunca o texto exato: `required_tools ⊆ tools usadas` (tool extra legítima não reprova), `forbidden_tools`, `no_tools`, `expected_contains` (sem diferenciar maiúsculas, aceita alternativas), `forbidden_contains`, `max_answer_chars`, `expected_chunks` e `expect_no_sources`.
+- **Sem números hardcoded:** placeholders como `{NF-9004}`, `{NF-9008.saldo_pendente}` e `{vencidos.quantidade}` são resolvidos pelos services antes do eval; valores aceitam `197.225,78` ou `197225.78`.
+- **Invariantes em todo caso do agente:** nenhum flush no banco e nenhuma tool fora da allowlist executada.
+- **Métricas por caso:** aprovado ou não, motivo, duração, tools, chamadas ao LLM e tokens de entrada, saída e embeddings. Os tokens vêm dos logs que os providers já emitem: o runner não conhece a SDK.
+- **Custo:** só é estimado se `--input-price` e `--output-price` (USD por 1M de tokens) forem informados. **É uma estimativa:** depende do preço configurado, que muda com o tempo; embeddings não entram na conta.
+- O relatório e o JSON não incluem API key, system prompt, resultados de tools nem conteúdo dos documentos. `eval-results*.json` não é versionado.
+- **Tool inexistente** (ex.: `executar_sql`) não é induzida no modelo real: a recusa é determinística (`TOOL_NAO_PERMITIDA`) e já está coberta pelo pytest.
+- Não há LLM-as-a-judge, plataforma de observabilidade nem modo fake no runner: o objetivo é medir o modelo real.
+
+Última execução (20 casos): 20/20, ~41 s, 25 chamadas ao LLM e ~33 mil tokens. Cada chamada do agente consome ~950 tokens de entrada só com prompt e tools; uma pergunta fora do domínio usa uma única chamada.
+
+**Observação de retrieval (medida, não corrigida):** os scores das seções relevantes ficam próximos (≈0,50–0,72) e, em "Quando um título não pode mais ser cancelado?", `regras_titulos.md › Cancelamento` aparece em 4º, atrás de `manual_financeiro.md › Fluxo de cancelamento`, que também responde. Como o agente recebe o top 5, não houve impacto na resposta. Perguntas fora do domínio ficam bem abaixo (≈0,15). Nenhum threshold, reranker ou busca híbrida foi adicionado.
+
+**Hardening revisado:** a pergunta é limitada a 1.000 caracteres também no backend (422); valores monetários, paginação e filtros já são validados (422). O Copilot no frontend tem timeout próprio (`AbortSignal.timeout`, 180 s, acima do pior caso do backend: 5 chamadas de 30 s); as telas de consulta não usam timeout porque só leem do banco. Timeout, rate limit e indisponibilidade do provider viram `504 IA_TIMEOUT` / `502 IA_INDISPONIVEL` sem stack trace, e o frontend mostra a mensagem da API. Sem retry automático de operações de IA.
 
 ---
 
@@ -523,7 +561,7 @@ O navegador nunca fala com a OpenAI. A `OPENAI_API_KEY` fica só na API; o front
 | 3 | RAG: documentação → chunking → embeddings → pgvector, com citação e validação de fontes | ✅ |
 | 4 | Agente Copilot: agent loop com tools somente leitura | ✅ |
 | 5 | Frontend (React + TypeScript + Tailwind): consulta de títulos e interface do Copilot | ✅ |
-| 6 | Observabilidade, avaliações e hardening | ⏳ |
+| 6 | Observabilidade, avaliações e hardening | ✅ |
 | 7 | Ações com confirmação explícita do usuário (opcional) | ⏳ |
 
 ### Limitações conhecidas
@@ -537,4 +575,5 @@ O navegador nunca fala com a OpenAI. A `OPENAI_API_KEY` fica só na API; o front
 - Agente sem memória entre requisições e sem tools de escrita (ações ficam para a Fase 7).
 - RAG básico de propósito: sem reranking, busca híbrida, reescrita de pergunta ou limiar de score (o LLM decide se os trechos são suficientes).
 - O `FakeEmbeddingProvider` usa bag-of-words: os testes validam o pipeline, não a qualidade semântica da busca.
-- Os smoke tests com a OpenAI real são manuais e não rodam na suíte.
+- Os smoke tests e os evals com a OpenAI real são manuais: não rodam na suíte nem em CI.
+- Os evals usam checks por termos: medem invariantes, não a qualidade linguística da resposta.
