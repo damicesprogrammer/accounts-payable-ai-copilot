@@ -1,8 +1,8 @@
 from logging.config import fileConfig
 
+from alembic import context
 from sqlalchemy import create_engine
 
-from alembic import context
 from app import models  # noqa: F401  (registra os models no metadata)
 from app.core.config import get_settings
 from app.core.db import Base

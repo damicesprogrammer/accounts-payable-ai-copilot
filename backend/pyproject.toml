@@ -27,6 +27,11 @@ target-version = "py312"
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP", "SIM"]
 
+[tool.ruff.lint.isort]
+# A pasta local alembic/ (migrations) confunde a detecção do pacote alembic
+known-first-party = ["app", "tests"]
+known-third-party = ["alembic"]
+
 [tool.ruff.lint.flake8-bugbear]
 # FastAPI usa Depends()/Query() como valor default por design
 extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
@@ -34,3 +39,7 @@ extend-immutable-calls = ["fastapi.Depends", "fastapi.Query"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+filterwarnings = [
+    # Aviso do Starlette sobre o TestClient baseado em httpx; sem impacto nos testes
+    "ignore:Using `httpx` with `starlette.testclient`",
+]
