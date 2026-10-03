@@ -112,6 +112,7 @@ export default function CopilotPage() {
 
 const markdownClass = [
   'mt-2 space-y-3 text-sm leading-relaxed text-slate-900',
+  '[&_h1]:text-base [&_h1]:font-semibold [&_h2]:text-base [&_h2]:font-semibold [&_h3]:font-semibold',
   '[&_ul]:list-disc [&_ul]:pl-5 [&_ol]:list-decimal [&_ol]:pl-5 [&_li]:mt-1 [&_strong]:font-semibold',
   '[&_table]:block [&_table]:overflow-x-auto [&_table]:text-xs [&_th]:border-b [&_th]:border-slate-200',
   '[&_th]:bg-slate-50 [&_th]:px-2 [&_th]:py-1.5 [&_th]:text-left [&_td]:border-b [&_td]:border-slate-100',
