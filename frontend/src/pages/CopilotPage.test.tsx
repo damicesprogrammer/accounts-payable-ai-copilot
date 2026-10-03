@@ -1,5 +1,6 @@
-import { fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { setLanguage } from '../i18n'
 import CopilotPage from './CopilotPage'
 
 function respostaFetch(status: number, body: unknown) {
@@ -13,6 +14,8 @@ function perguntar(texto: string) {
 
 afterEach(() => {
   vi.unstubAllGlobals()
+  setLanguage('en-US')
+  localStorage.clear()
 })
 
 describe('CopilotPage', () => {
@@ -39,7 +42,7 @@ describe('CopilotPage', () => {
     const [url, init] = fetch.mock.calls[0]
     expect(url).toMatch(/\/ai\/copilot$/)
     expect(init.method).toBe('POST')
-    expect(JSON.parse(init.body)).toEqual({ question: 'Por que o título 4 está com erro?' })
+    expect(JSON.parse(init.body)).toEqual({ question: 'Por que o título 4 está com erro?', language: 'en-US' })
   })
 
   it('renderiza Markdown da resposta sem interpretar HTML bruto', async () => {
@@ -84,9 +87,33 @@ describe('CopilotPage', () => {
     vi.stubGlobal('fetch', fetch)
     render(<CopilotPage />)
 
-    fireEvent.click(screen.getByRole('button', { name: 'Quais títulos estão vencidos?' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Which invoices are overdue?' }))
 
-    expect((screen.getByLabelText('Question') as HTMLTextAreaElement).value).toBe('Quais títulos estão vencidos?')
+    expect((screen.getByLabelText('Question') as HTMLTextAreaElement).value).toBe('Which invoices are overdue?')
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('pede a resposta no idioma selecionado', async () => {
+    const fetch = respostaFetch(200, { answer: 'Há 16 títulos vencidos.', tools_used: [] })
+    vi.stubGlobal('fetch', fetch)
+    setLanguage('pt-BR')
+    render(<CopilotPage />)
+
+    fireEvent.change(screen.getByLabelText('Pergunta'), { target: { value: 'Quais títulos estão vencidos?' } })
+    fireEvent.click(screen.getByRole('button', { name: 'Enviar' }))
+
+    await screen.findByText('Há 16 títulos vencidos.')
+    expect(JSON.parse(fetch.mock.calls[0][1].body).language).toBe('pt-BR')
+  })
+
+  it('sugestões acompanham o idioma selecionado', () => {
+    render(<CopilotPage />)
+    expect(screen.getByRole('button', { name: 'Which invoices are overdue?' })).toBeTruthy()
+
+    act(() => setLanguage('pt-BR'))
+
+    expect(screen.queryByRole('button', { name: 'Which invoices are overdue?' })).toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Quais títulos estão vencidos?' }))
+    expect((screen.getByLabelText('Pergunta') as HTMLTextAreaElement).value).toBe('Quais títulos estão vencidos?')
   })
 })

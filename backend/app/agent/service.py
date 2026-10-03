@@ -16,7 +16,7 @@ from sqlalchemy.orm import Session
 
 from app.ai.contracts import ChatMessage, LLMProvider, TokenUsage
 from app.ai.exceptions import AgentIterationLimitError, LLMProviderError
-from app.schemas.agent import CopilotResponse, ToolUsada
+from app.schemas.agent import CopilotResponse, Idioma, ToolUsada
 from app.tools.registry import ToolRegistry
 
 logger = logging.getLogger(__name__)
@@ -51,8 +51,23 @@ se não houver informação suficiente, diga que o AP Copilot não tem informaç
 12. Não faça cálculos financeiros a partir de listas quando uma tool fornecer valores \
 consolidados. Utilize os valores calculados pelo sistema.
 13. PENDENTE é um status do workflow; VENCIDO é uma condição baseada na data de vencimento. \
-Não trate esses conceitos como sinônimos.
-14. Responda em português, de forma objetiva."""
+Não trate esses conceitos como sinônimos."""
+
+# Última regra: o idioma da resposta escolhido na interface. Valores do sistema
+# (status, códigos, números de títulos) ficam como estão para bater com a tela.
+REGRA_IDIOMA: dict[Idioma, str] = {
+    "pt-BR": "14. Responda em português, de forma objetiva.",
+    "en-US": (
+        "14. Responda em inglês (en-US), de forma objetiva, mesmo que a pergunta, as tools ou a "
+        "documentação estejam em português. Mantenha como no sistema os valores de status "
+        "(ex.: PENDENTE), códigos de erro e números de títulos. Valores monetários são em "
+        "reais (BRL): escreva-os com R$, nunca com $ ou USD."
+    ),
+}
+
+
+def prompt_sistema(idioma: Idioma = "pt-BR") -> str:
+    return f"{PROMPT_SISTEMA}\n{REGRA_IDIOMA[idioma]}"
 
 
 class AgentService:
@@ -61,10 +76,10 @@ class AgentService:
         self.llm = llm
         self.registry = registry
 
-    def run(self, question: str) -> CopilotResponse:
+    def run(self, question: str, idioma: Idioma = "pt-BR") -> CopilotResponse:
         inicio = time.perf_counter()
         mensagens = [
-            ChatMessage(role="system", content=PROMPT_SISTEMA),
+            ChatMessage(role="system", content=prompt_sistema(idioma)),
             ChatMessage(role="user", content=question),
         ]
         definicoes = self.registry.definitions()

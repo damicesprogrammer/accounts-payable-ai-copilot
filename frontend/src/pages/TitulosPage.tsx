@@ -6,6 +6,7 @@ import EmptyState from '../components/EmptyState'
 import ErrorMessage from '../components/ErrorMessage'
 import Loading from '../components/Loading'
 import StatusBadge from '../components/StatusBadge'
+import { useI18n } from '../i18n'
 import { formatCurrency, formatDate } from '../utils/format'
 
 const STATUS = ['PENDENTE', 'APROVADO', 'PAGO', 'CANCELADO', 'ERRO']
@@ -15,6 +16,7 @@ const selectClass =
 
 export default function TitulosPage() {
   const navigate = useNavigate()
+  const { t } = useI18n()
   const [filtros, setFiltros] = useState<FiltrosTitulos>({ status: '', fornecedorId: '', vencidos: false })
   // A filtragem é sempre feita pelo backend.
   const titulos = useApi(JSON.stringify(filtros), () => listarTitulos(filtros))
@@ -23,18 +25,18 @@ export default function TitulosPage() {
   return (
     <section>
       <div className="mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Accounts Payable</h1>
-        <p className="mt-1 text-sm text-slate-500">Payable invoices and their current status.</p>
+        <h1 className="text-2xl font-semibold tracking-tight">{t('nav.accountsPayable')}</h1>
+        <p className="mt-1 text-sm text-slate-500">{t('titulos.subtitle')}</p>
       </div>
 
       <div className="mb-4 flex flex-wrap items-center gap-3">
         <select
-          aria-label="Status"
+          aria-label={t('titulos.status')}
           className={selectClass}
           value={filtros.status}
           onChange={(e) => setFiltros({ ...filtros, status: e.target.value })}
         >
-          <option value="">All statuses</option>
+          <option value="">{t('titulos.allStatuses')}</option>
           {STATUS.map((s) => (
             <option key={s} value={s}>
               {s}
@@ -42,12 +44,12 @@ export default function TitulosPage() {
           ))}
         </select>
         <select
-          aria-label="Supplier"
+          aria-label={t('titulos.supplier')}
           className={selectClass}
           value={filtros.fornecedorId}
           onChange={(e) => setFiltros({ ...filtros, fornecedorId: e.target.value })}
         >
-          <option value="">All suppliers</option>
+          <option value="">{t('titulos.allSuppliers')}</option>
           {fornecedores.data?.map((f) => (
             <option key={f.id} value={f.id}>
               {f.nome}
@@ -61,13 +63,13 @@ export default function TitulosPage() {
             checked={filtros.vencidos}
             onChange={(e) => setFiltros({ ...filtros, vencidos: e.target.checked })}
           />
-          Overdue only
+          {t('titulos.overdueOnly')}
         </label>
         {titulos.data && (
           <span className="ml-auto text-sm text-slate-500">
             {titulos.data.length === LIMITE_TITULOS
-              ? `Showing the first ${LIMITE_TITULOS} records`
-              : `${titulos.data.length} record${titulos.data.length === 1 ? '' : 's'}`}
+              ? t('titulos.showingFirst', { count: LIMITE_TITULOS })
+              : t(titulos.data.length === 1 ? 'titulos.record' : 'titulos.records', { count: titulos.data.length })}
           </span>
         )}
       </div>
@@ -75,16 +77,16 @@ export default function TitulosPage() {
       <div className="overflow-x-auto rounded-lg border border-slate-200 bg-white shadow-sm">
         {titulos.loading && <div className="px-4"><Loading /></div>}
         {titulos.error && <div className="p-4"><ErrorMessage message={titulos.error} /></div>}
-        {titulos.data?.length === 0 && <EmptyState text="No accounts payable records found." />}
+        {titulos.data?.length === 0 && <EmptyState text={t('titulos.empty')} />}
         {!!titulos.data?.length && (
           <table className="min-w-full text-sm">
             <thead className="bg-slate-50 text-left text-xs font-medium uppercase tracking-wide text-slate-500">
               <tr>
-                <th className="px-4 py-3">Number</th>
-                <th className="px-4 py-3">Supplier</th>
-                <th className="px-4 py-3">Due date</th>
-                <th className="px-4 py-3 text-right">Total amount</th>
-                <th className="px-4 py-3">Status</th>
+                <th className="px-4 py-3">{t('titulo.number')}</th>
+                <th className="px-4 py-3">{t('titulo.supplier')}</th>
+                <th className="px-4 py-3">{t('titulo.dueDate')}</th>
+                <th className="px-4 py-3 text-right">{t('titulo.totalAmount')}</th>
+                <th className="px-4 py-3">{t('titulo.status')}</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">

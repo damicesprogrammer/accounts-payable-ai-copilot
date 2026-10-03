@@ -1,3 +1,5 @@
+import { translate } from '../i18n'
+
 const API_URL = import.meta.env.VITE_API_URL ?? 'http://localhost:8000'
 
 /** Erro já traduzido em uma mensagem que pode ser mostrada ao usuário. */
@@ -19,9 +21,9 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     })
   } catch (error) {
     if (error instanceof DOMException && error.name === 'TimeoutError') {
-      throw new ApiError('The request timed out. Please try again.', 'TIMEOUT')
+      throw new ApiError(translate('api.timeout'), 'TIMEOUT')
     }
-    throw new ApiError(`Could not reach the API at ${API_URL}. Is the backend running?`, 'API_UNAVAILABLE')
+    throw new ApiError(translate('api.unavailable', { url: API_URL }), 'API_UNAVAILABLE')
   }
 
   const body = await response.json().catch(() => null)
@@ -29,7 +31,7 @@ export async function request<T>(path: string, init?: RequestInit): Promise<T> {
     throw new ApiError(errorMessage(response.status, body), body?.error?.code)
   }
   if (body === null) {
-    throw new ApiError('Unexpected response from the API.')
+    throw new ApiError(translate('api.unexpectedResponse'))
   }
   return body as T
 }
@@ -40,6 +42,6 @@ function errorMessage(status: number, body: unknown): string {
   if (domain) return domain
   // Validação do FastAPI: { detail: [{ msg }] }
   const detail = (body as { detail?: { msg?: string }[] } | null)?.detail
-  if (Array.isArray(detail) && detail[0]?.msg) return `Invalid request: ${detail[0].msg}`
-  return `Unexpected API error (HTTP ${status}).`
+  if (Array.isArray(detail) && detail[0]?.msg) return translate('api.invalidRequest', { message: detail[0].msg })
+  return translate('api.unexpectedError', { status })
 }

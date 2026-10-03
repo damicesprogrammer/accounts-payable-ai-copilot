@@ -9,7 +9,7 @@ from datetime import date, timedelta
 
 import pytest
 
-from app.agent.service import MAX_ITERATIONS, PROMPT_SISTEMA, AgentService
+from app.agent.service import MAX_ITERATIONS, AgentService, prompt_sistema
 from app.ai.contracts import ChatMessage, LLMResponse, TokenUsage, ToolCall
 from app.ai.exceptions import AgentIterationLimitError, LLMProviderError, LLMTimeoutError
 from app.ai.providers.fake import FakeEmbeddingProvider, FakeLLMProvider
@@ -58,7 +58,7 @@ def test_resposta_direta_sem_tools(db):
     assert resposta.tools_used == []
     [chamada] = llm.chamadas
     sistema, usuario = chamada["messages"]
-    assert (sistema.role, sistema.content) == ("system", PROMPT_SISTEMA)
+    assert (sistema.role, sistema.content) == ("system", prompt_sistema("pt-BR"))
     assert (usuario.role, usuario.content) == ("user", "Quem é você?")
     assert {t.name for t in chamada["tools"]} == {
         "get_titulo",
@@ -325,3 +325,13 @@ def test_log_soma_os_tokens_de_todas_as_chamadas_da_pergunta(db, caplog):
 
     [registro] = [r for r in caplog.records if r.getMessage() == "Agente concluído"]
     assert (registro.input_tokens, registro.output_tokens) == (2000, 80)
+
+
+def test_prompt_em_ingles_preserva_as_regras_e_os_valores_do_sistema():
+    pt, en = prompt_sistema("pt-BR"), prompt_sistema("en-US")
+
+    assert pt.endswith("14. Responda em português, de forma objetiva.")
+    assert "Responda em inglês (en-US)" in en and "Responda em português" not in en
+    assert "PENDENTE" in en.split("14.")[1]  # status ficam como no sistema
+    assert "R$" in en.split("14.")[1]  # moeda continua sendo real, não dólar
+    assert pt.split("14.")[0] == en.split("14.")[0]  # regras 1–13 idênticas

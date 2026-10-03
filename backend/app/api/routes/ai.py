@@ -7,7 +7,7 @@ from app.ai.contracts import EmbeddingProvider, LLMProvider
 from app.ai.providers import get_embedding_provider, get_llm_provider
 from app.api.deps import DbSession
 from app.rag.service import RAGService
-from app.schemas.agent import CopilotResponse
+from app.schemas.agent import CopilotInput, CopilotResponse
 from app.schemas.common import ErrorResponse
 from app.schemas.rag import PerguntaInput, RespostaRAG
 from app.tools.registry import criar_registry_financeiro
@@ -46,10 +46,11 @@ def perguntar(
     responses={code: {"model": ErrorResponse} for code in (502, 503, 504)},
 )
 def copilot(
-    dados: PerguntaInput,
+    dados: CopilotInput,
     db: DbSession,
     embeddings: Annotated[EmbeddingProvider, Depends(embedding_provider)],
     llm: Annotated[LLMProvider, Depends(llm_provider)],
 ):
     """Copilot com tools somente leitura. Cada requisição é independente (sem memória)."""
-    return AgentService(db, llm, criar_registry_financeiro(embeddings)).run(dados.question)
+    agente = AgentService(db, llm, criar_registry_financeiro(embeddings))
+    return agente.run(dados.question, idioma=dados.language)

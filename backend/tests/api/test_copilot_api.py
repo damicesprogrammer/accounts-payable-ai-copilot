@@ -1,6 +1,6 @@
 import pytest
 
-from app.agent.service import MAX_ITERATIONS
+from app.agent.service import MAX_ITERATIONS, prompt_sistema
 from app.ai.contracts import LLMResponse, ToolCall
 from app.ai.exceptions import LLMTimeoutError
 from app.ai.providers import get_embedding_provider, get_llm_provider
@@ -111,3 +111,27 @@ def test_cada_requisicao_e_independente(client):
     segunda = llm.chamadas[1]["messages"]
     assert [m.role for m in segunda] == ["system", "user"]
     assert "PERGUNTA-UM" not in " ".join(m.content or "" for m in segunda)
+
+
+@pytest.mark.parametrize(
+    ("corpo", "idioma"),
+    [({}, "pt-BR"), ({"language": "pt-BR"}, "pt-BR"), ({"language": "en-US"}, "en-US")],
+)
+def test_copilot_responde_no_idioma_escolhido(client, corpo, idioma):
+    llm = FakeLLMProvider(["ok"])
+    _usar(llm)
+
+    resposta = client.post("/ai/copilot", json={"question": "Situação?", **corpo})
+
+    assert resposta.status_code == 200
+    # Sem `language`, o padrão é português (o mesmo prompt usado pelos evals).
+    assert llm.chamadas[0]["messages"][0].content == prompt_sistema(idioma)
+
+
+@pytest.mark.parametrize("language", ["es-ES", "en", "", None])
+def test_copilot_recusa_idioma_nao_suportado(client, language):
+    _usar(FakeLLMProvider(["ok"]))
+
+    resposta = client.post("/ai/copilot", json={"question": "Situação?", "language": language})
+
+    assert resposta.status_code == 422
