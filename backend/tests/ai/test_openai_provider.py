@@ -10,7 +10,7 @@ import pytest
 from openai.types.chat import ChatCompletion
 from pydantic import BaseModel, SecretStr, ValidationError
 
-from app.ai.contracts import ChatMessage, ToolDefinition
+from app.ai.contracts import ChatMessage, ToolCall, ToolDefinition
 from app.ai.exceptions import (
     LLMConfigurationError,
     LLMProviderError,
@@ -117,6 +117,46 @@ def test_tool_definitions_sao_convertidas_para_o_formato_da_openai():
     assert completions.kwargs["messages"] == [
         {"role": "user", "content": "Qual o status do título 7?"}
     ]
+
+
+def test_historico_com_tool_calls_e_resultados_e_convertido_para_a_openai():
+    chamada = ToolCall(id="call_abc", name="get_titulo", arguments={"titulo_id": 7})
+    historico = [
+        *PERGUNTA,
+        ChatMessage(role="assistant", tool_calls=[chamada]),
+        ChatMessage(role="tool", tool_call_id="call_abc", content='{"ok": true}'),
+    ]
+    provider, completions = _provider(_completion({"role": "assistant", "content": "ok"}))
+
+    provider.generate(historico, tools=[GET_TITULO])
+
+    assert completions.kwargs["messages"][1:] == [
+        {
+            "role": "assistant",
+            "content": None,
+            "tool_calls": [
+                {
+                    "id": "call_abc",
+                    "type": "function",
+                    "function": {"name": "get_titulo", "arguments": '{"titulo_id": 7}'},
+                }
+            ],
+        },
+        {"role": "tool", "tool_call_id": "call_abc", "content": '{"ok": true}'},
+    ]
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"role": "tool", "content": "x"},  # resultado sem tool_call_id
+        {"role": "user", "content": "x", "tool_call_id": "call_1"},
+        {"role": "user", "tool_calls": [{"id": "c", "name": "get_titulo", "arguments": {}}]},
+    ],
+)
+def test_mensagem_incoerente_com_o_role_e_recusada(kwargs):
+    with pytest.raises(ValidationError):
+        ChatMessage(**kwargs)
 
 
 def test_tool_call_da_openai_e_normalizada_para_nosso_tool_call():

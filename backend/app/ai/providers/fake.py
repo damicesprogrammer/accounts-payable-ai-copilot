@@ -30,7 +30,8 @@ class FakeLLMProvider:
     def generate(
         self, messages: list[ChatMessage], *, tools: list[ToolDefinition] | None = None
     ) -> LLMResponse:
-        self.chamadas.append({"messages": messages, "tools": tools})
+        # Cópia: quem chama (ex.: o agente) continua acrescentando ao mesmo histórico.
+        self.chamadas.append({"messages": list(messages), "tools": tools})
         resposta = self._proxima()
         if isinstance(resposta, str):
             return LLMResponse(content=resposta, model="fake", finish_reason="stop")
@@ -39,7 +40,7 @@ class FakeLLMProvider:
     def generate_structured[T: BaseModel](
         self, messages: list[ChatMessage], response_model: type[T]
     ) -> T:
-        self.chamadas.append({"messages": messages, "response_model": response_model})
+        self.chamadas.append({"messages": list(messages), "response_model": response_model})
         resposta = self._proxima()
         bruto = resposta if isinstance(resposta, str) else (resposta.content or "")
         try:

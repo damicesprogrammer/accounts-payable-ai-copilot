@@ -145,8 +145,27 @@ def _ms_desde(inicio: float) -> int:
     return round((time.perf_counter() - inicio) * 1000)
 
 
-def _mensagens(messages: list[ChatMessage]) -> list[dict[str, str]]:
-    return [{"role": m.role, "content": m.content} for m in messages]
+def _mensagens(messages: list[ChatMessage]) -> list[dict[str, Any]]:
+    return [_mensagem(m) for m in messages]
+
+
+def _mensagem(m: ChatMessage) -> dict[str, Any]:
+    if m.role == "tool":
+        return {"role": "tool", "tool_call_id": m.tool_call_id, "content": m.content or ""}
+    mensagem: dict[str, Any] = {"role": m.role, "content": m.content}
+    if m.tool_calls:
+        mensagem["tool_calls"] = [
+            {
+                "id": tc.id,  # o mesmo id gerado pelo modelo: correlaciona pedido e resultado
+                "type": "function",
+                "function": {
+                    "name": tc.name,
+                    "arguments": json.dumps(tc.arguments, ensure_ascii=False),
+                },
+            }
+            for tc in m.tool_calls
+        ]
+    return mensagem
 
 
 def _tool_openai(tool: ToolDefinition) -> dict[str, Any]:
