@@ -4,7 +4,8 @@ from datetime import date
 from sqlalchemy.orm import Session
 
 from app.core.exceptions import BusinessRuleError, ConflictError, NotFoundError
-from app.models import StatusLog, StatusTitulo, TipoLog, TituloPagar
+from app.models import LogIntegracao, StatusLog, StatusTitulo, TipoLog, TituloPagar
+from app.repositories.log_repository import LogRepository
 from app.repositories.pagamento_repository import PagamentoRepository
 from app.repositories.rateio_repository import RateioRepository
 from app.repositories.titulo_repository import TituloRepository
@@ -52,6 +53,10 @@ class TituloService:
         if titulo is None:
             raise self._nao_encontrado(titulo_id)
         return titulo
+
+    def listar_logs(self, titulo_id: int) -> Sequence[LogIntegracao]:
+        self.obter(titulo_id)  # 404 se o título não existir
+        return LogRepository(self.db).list_by_titulo(titulo_id)
 
     def obter_para_alteracao(self, titulo_id: int) -> TituloPagar:
         """Obtém o título com lock de linha. Usado por toda operação de escrita

@@ -2,6 +2,7 @@ from fastapi import APIRouter, status
 
 from app.api.deps import ERROS_404, ERROS_409, ERROS_422, DbSession, PaginacaoParams
 from app.models import StatusTitulo
+from app.schemas.log import LogRead
 from app.schemas.pagamento import PagamentoCreate, PagamentoRead
 from app.schemas.rateio import RateioCreate, RateioRead
 from app.schemas.titulo import CancelamentoInput, TituloCreate, TituloRead, TituloUpdate
@@ -127,3 +128,12 @@ def registrar_pagamento(titulo_id: int, dados: PagamentoCreate, db: DbSession):
 )
 def estornar_pagamento(titulo_id: int, pagamento_id: int, db: DbSession):
     return PagamentoService(db).estornar(titulo_id, pagamento_id)
+
+
+# ---------------------------------------------------------------- auditoria
+
+
+@router.get("/{titulo_id}/logs", response_model=list[LogRead], responses=ERROS_404)
+def listar_logs(titulo_id: int, db: DbSession):
+    """Trilha de auditoria do título, em ordem cronológica."""
+    return TituloService(db).listar_logs(titulo_id)
