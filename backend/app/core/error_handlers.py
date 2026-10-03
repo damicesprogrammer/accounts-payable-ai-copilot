@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 
 from app.ai.exceptions import (
+    AgentIterationLimitError,
     LLMConfigurationError,
     LLMError,
     LLMStructuredOutputError,
@@ -45,6 +46,7 @@ _STATUS_BY_LLM_ERROR: list[tuple[type[LLMError], int, str]] = [
     (LLMConfigurationError, status.HTTP_503_SERVICE_UNAVAILABLE, "IA_NAO_CONFIGURADA"),
     (LLMTimeoutError, status.HTTP_504_GATEWAY_TIMEOUT, "IA_TIMEOUT"),
     (LLMStructuredOutputError, status.HTTP_502_BAD_GATEWAY, "IA_RESPOSTA_INVALIDA"),
+    (AgentIterationLimitError, status.HTTP_502_BAD_GATEWAY, "IA_LIMITE_ITERACOES"),
     (LLMError, status.HTTP_502_BAD_GATEWAY, "IA_INDISPONIVEL"),
 ]
 
