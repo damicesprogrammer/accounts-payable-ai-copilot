@@ -65,14 +65,17 @@ class OpenAIProvider:
             response_format=response_model,
         )
         choice = completion.choices[0]
+        # Recusa ou ausência de objeto não é sucesso: verifica antes de registrar.
+        if choice.message.refusal or choice.message.parsed is None:
+            erro = LLMStructuredOutputError(
+                f"O modelo não retornou um {response_model.__name__} válido."
+            )
+            self._log_falha(erro, duracao_ms)
+            raise erro
         metadados = LLMResponse(
             model=completion.model, finish_reason=choice.finish_reason, usage=_usage(completion)
         )
         self._log_sucesso(metadados, duracao_ms)
-        if choice.message.refusal or choice.message.parsed is None:
-            raise LLMStructuredOutputError(
-                f"O modelo não retornou um {response_model.__name__} válido."
-            )
         return choice.message.parsed
 
     # ------------------------------------------------------------------ apoio

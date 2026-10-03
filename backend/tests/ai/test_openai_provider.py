@@ -193,6 +193,19 @@ def test_structured_output_recusado_pelo_modelo():
         provider.generate_structured(PERGUNTA, Diagnostico)
 
 
+@pytest.mark.parametrize("refusal", ["Não posso ajudar.", None])
+def test_structured_output_recusado_ou_vazio_nao_e_registrado_como_sucesso(caplog, refusal):
+    caplog.set_level(logging.INFO, logger="app.ai.providers.openai")
+    provider, _ = _provider(_parsed(None, refusal=refusal))
+
+    with pytest.raises(LLMStructuredOutputError):
+        provider.generate_structured(PERGUNTA, Diagnostico)
+
+    [registro] = caplog.records
+    assert registro.getMessage() == "Chamada LLM falhou"
+    assert registro.error_type == "LLMStructuredOutputError"
+
+
 def test_structured_output_invalido_gera_erro_especifico():
     try:
         Diagnostico.model_validate_json('{"titulo_id": "sete"}')
