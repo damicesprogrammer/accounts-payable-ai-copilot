@@ -23,6 +23,10 @@ services:
       DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ap_copilot}:${POSTGRES_PASSWORD:-ap_copilot}@db:5432/${POSTGRES_DB:-ap_copilot}
       TEST_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-ap_copilot}:${POSTGRES_PASSWORD:-ap_copilot}@db:5432/ap_copilot_test
       LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      # IA (opcional): defina no arquivo .env da raiz; nunca versionar a chave.
+      LLM_PROVIDER: ${LLM_PROVIDER:-openai}
+      OPENAI_API_KEY: ${OPENAI_API_KEY:-}
+      OPENAI_MODEL: ${OPENAI_MODEL:-}
     ports:
       - "${API_PORT:-8000}:8000"
     volumes:

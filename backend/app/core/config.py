@@ -1,5 +1,6 @@
 from functools import lru_cache
 
+from pydantic import SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -13,6 +14,13 @@ class Settings(BaseSettings):
         "postgresql+psycopg://ap_copilot:ap_copilot@localhost:5432/ap_copilot_test"
     )
     log_level: str = "INFO"
+
+    # IA — opcionais: a API financeira funciona sem eles. A falta só gera erro
+    # quando algo que usa o LLM é chamado (ver app.ai.providers.get_llm_provider).
+    llm_provider: str = "openai"
+    openai_api_key: SecretStr | None = None  # SecretStr: nunca aparece em repr/logs
+    openai_model: str | None = None
+    llm_timeout_seconds: float = 30.0
 
 
 @lru_cache
